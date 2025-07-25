@@ -24,12 +24,7 @@ scheduleProgram/
 │   └── ProgramInfo.cs         # 프로그램 정보 클래스
 ├── ?? Services/               # 비즈니스 로직
 │   └── ProgramManager.cs      # 프로그램 관리 서비스
-├── ?? Programs/               # 실행할 프로그램들
-│   └── ?? lottoApp/           # 로또 관련 프로그램
-│       ├── LottoNumberGenerator.cs
-│       ├── LottoStatistics.cs
-│       ├── LottoChecker.cs
-│       └── getHistory.cs
+├── ?? Programs/               # 실행할 프로그램들 (사용자가 추가)
 ├── UITheme.cs                 # UI 테마 관리
 ├── UIComponents.cs            # UI 컴포넌트 팩토리
 ├── MainForm.cs                # 메인 폼 로직
@@ -86,7 +81,7 @@ private string memo = "프로그램 설명";
 using System;
 using System.Windows.Forms;
 
-namespace scheduleProgram.lottoApp
+namespace scheduleProgram.myProgram
 {
     public class SampleProgram
     {
@@ -128,6 +123,7 @@ namespace scheduleProgram.lottoApp
 - [ ] 설정 파일 지원
 - [ ] 프로그램 실행 히스토리
 - [ ] 다크 모드 지원
+- [ ] 코드 생성 기능 (비주얼 디자이너에서)
 
 ## ?? 기여하기
 

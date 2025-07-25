@@ -2,9 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
-using System.CodeDom.Compiler;
-using Microsoft.CSharp;
 using System.Windows.Forms;
 
 namespace scheduleProgram
@@ -22,7 +19,6 @@ namespace scheduleProgram
             _baseProgramsPath = Path.Combine(Application.StartupPath, "Programs");
             _programs = new List<ProgramInfo>();
             EnsureDirectoryExists();
-            CreateSampleProgram();
         }
 
         /// <summary>
@@ -33,36 +29,6 @@ namespace scheduleProgram
             if (!Directory.Exists(_baseProgramsPath))
             {
                 Directory.CreateDirectory(_baseProgramsPath);
-            }
-        }
-
-        /// <summary>
-        /// 샘플 프로그램 생성 (lottoApp)
-        /// </summary>
-        private void CreateSampleProgram()
-        {
-            var lottoAppPath = Path.Combine(_baseProgramsPath, "lottoApp");
-            if (!Directory.Exists(lottoAppPath))
-            {
-                Directory.CreateDirectory(lottoAppPath);
-
-                // 샘플 CS 파일들 생성
-                CreateSampleCsFile(lottoAppPath, "LottoNumberGenerator.cs", "로또 번호 생성기", GenerateLottoNumberScript());
-                CreateSampleCsFile(lottoAppPath, "LottoStatistics.cs", "로또 통계 분석", GenerateLottoStatisticsScript());
-                CreateSampleCsFile(lottoAppPath, "LottoChecker.cs", "로또 당첨 확인", GenerateLottoCheckerScript());
-            }
-        }
-
-        /// <summary>
-        /// 샘플 CS 파일 생성
-        /// </summary>
-        private void CreateSampleCsFile(string folderPath, string fileName, string memo, string content)
-        {
-            var filePath = Path.Combine(folderPath, fileName);
-            if (!File.Exists(filePath))
-            {
-                var finalContent = content.Replace("{MEMO_PLACEHOLDER}", memo);
-                File.WriteAllText(filePath, finalContent);
             }
         }
 
@@ -217,85 +183,5 @@ namespace scheduleProgram
                 return false;
             }
         }
-
-        #region 샘플 스크립트 생성기
-
-        private string GenerateLottoNumberScript()
-        {
-            return @"using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Windows.Forms;
-
-namespace lottoApp
-{
-    public class LottoNumberGenerator
-    {
-        private string memo = ""{MEMO_PLACEHOLDER}"";
-        
-        public void Execute()
-        {
-            var numbers = GenerateLottoNumbers();
-            MessageBox.Show($""추천 로또 번호: {string.Join("", "", numbers)}"", 
-                ""로또 번호 생성기"", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-        
-        private List<int> GenerateLottoNumbers()
-        {
-            var random = new Random();
-            var numbers = new HashSet<int>();
-            
-            while (numbers.Count < 6)
-            {
-                numbers.Add(random.Next(1, 46));
-            }
-            
-            return numbers.OrderBy(n => n).ToList();
-        }
-    }
-}";
-        }
-
-        private string GenerateLottoStatisticsScript()
-        {
-            return @"using System;
-using System.Windows.Forms;
-
-namespace lottoApp
-{
-    public class LottoStatistics
-    {
-        private string memo = ""{MEMO_PLACEHOLDER}"";
-        
-        public void Execute()
-        {
-            MessageBox.Show(""로또 통계 분석을 실행합니다.\n\n가장 많이 나온 번호: 7, 23, 31\n가장 적게 나온 번호: 2, 15, 44"", 
-                ""로또 통계 분석"", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-    }
-}";
-        }
-
-        private string GenerateLottoCheckerScript()
-        {
-            return @"using System;
-using System.Windows.Forms;
-
-namespace lottoApp
-{
-    public class LottoChecker
-    {
-        private string memo = ""{MEMO_PLACEHOLDER}"";
-        
-        public void Execute()
-        {
-            MessageBox.Show(""로또 당첨 번호와 비교하여 당첨 여부를 확인합니다.\n\n번호를 입력하세요: (예정 기능)"", 
-                ""로또 당첨 확인"", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-    }
-}";
-        }
-
-        #endregion
     }
 }

@@ -15,6 +15,7 @@ namespace scheduleProgram
         private DataGridView programsGrid;
         private Button refreshButton;
         private Button addFolderButton;
+        private Button openDesignerButton;
         private Panel topPanel;
         private StatusStrip statusStrip;
         private ToolStripStatusLabel statusLabel;
@@ -58,6 +59,14 @@ namespace scheduleProgram
         private void AddFolderButton_Click(object sender, EventArgs e)
         {
             ShowAddFolderDialog();
+        }
+
+        /// <summary>
+        /// 비주얼 디자이너 열기 버튼 클릭 이벤트
+        /// </summary>
+        private void OpenDesignerButton_Click(object sender, EventArgs e)
+        {
+            OpenVisualDesigner();
         }
 
         /// <summary>
@@ -134,7 +143,7 @@ namespace scheduleProgram
         private void ShowAddFolderDialog()
         {
             var inputDialog = new SimpleInputDialog("새 프로그램 폴더 이름을 입력하세요:", "폴더 추가", "newProgram");
-            
+
             if (inputDialog.ShowDialog() == DialogResult.OK)
             {
                 var folderName = inputDialog.InputText;
@@ -150,6 +159,22 @@ namespace scheduleProgram
                         ShowError("폴더 생성에 실패했습니다. 이미 존재하거나 잘못된 이름일 수 있습니다.");
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// 비주얼 디자이너를 엽니다
+        /// </summary>
+        private void OpenVisualDesigner()
+        {
+            try
+            {
+                MessageBox.Show("비주얼 폼 디자이너는 개발 중입니다.", "알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                UpdateStatus("비주얼 폼 디자이너 기능은 개발 중입니다.");
+            }
+            catch (Exception ex)
+            {
+                ShowError($"디자이너 열기 실패: {ex.Message}");
             }
         }
 
@@ -201,7 +226,7 @@ namespace scheduleProgram
                 );
 
                 // 마지막 수정일시를 툴팁으로 추가
-                programsGrid.Rows[rowIndex].Cells[0].ToolTipText = 
+                programsGrid.Rows[rowIndex].Cells[0].ToolTipText =
                     $"마지막 수정: {program.LastModified:yyyy-MM-dd HH:mm:ss}";
             }
         }
