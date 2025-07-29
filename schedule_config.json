@@ -1,0 +1,22 @@
+{
+  "Lotto_GetWinnerHistory.cs": {
+    "IsEnabled": true,
+    "ScheduleType": 3,
+    "ScheduledTime": "2025-07-27T21:00:00+09:00",
+    "IntervalMinutes": 120,
+    "LastExecuted": "2025-07-27T14:58:38.8615711+09:00",
+    "SelectedDayOfWeek": 6,
+    "SelectedDayOfMonth": 1,
+    "IsLastDayOfMonth": false
+  },
+  "Test_getTest.cs": {
+    "IsEnabled": false,
+    "ScheduleType": 2,
+    "ScheduledTime": null,
+    "IntervalMinutes": 60,
+    "LastExecuted": null,
+    "SelectedDayOfWeek": 1,
+    "SelectedDayOfMonth": 1,
+    "IsLastDayOfMonth": false
+  }
+}

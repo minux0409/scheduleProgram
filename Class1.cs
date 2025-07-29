@@ -1,82 +1,128 @@
-ï»¿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Forms;
+using scheduleProgram.Services;
 
 namespace scheduleProgram
 {
     /// <summary>
-    /// í”„ë¡œê·¸ë¨ ê´€ë¦¬ ë©”ì¸ í¼
+    /// ÇÁ·Î±×·¥ °ü¸® ¸ŞÀÎ Æû
     /// </summary>
     public partial class MainForm : Form
     {
-        #region í•„ë“œ ë° ì†ì„±
+        #region ÇÊµå ¹× ¼Ó¼º
         private ProgramManager programManager;
+        private SchedulerService schedulerService;
         private DataGridView programsGrid;
         private Button refreshButton;
-        private Button addFolderButton;
-        private Button openDesignerButton;
+        private Button schedulerToggleButton;
         private Panel topPanel;
         private StatusStrip statusStrip;
         private ToolStripStatusLabel statusLabel;
         private List<ProgramInfo> currentPrograms;
+        
+        // ½ÇÇà ÀÌ·Â °ü·Ã ÄÁÆ®·Ñ
+        private Panel historyPanel;
+        private Label historyTitleLabel;
+        private ListBox historyListBox;
+        private List<ExecutionHistory> executionHistory;
+        private DateTime lastHistoryClearDate; // ¸¶Áö¸· ÀÌ·Â ÃÊ±âÈ­ ³¯Â¥
+        private const int MaxHistoryCount = 200; // ÃÖ´ë ÀÌ·Â °³¼ö Áõ°¡
         #endregion
 
-        #region ìƒì„±ì
+        #region »ı¼ºÀÚ
         public MainForm()
         {
+            // ½º·¹µå °£ È£Ãâ °Ë»ç ºñÈ°¼ºÈ­ (°³¹ß ´Ü°è¿¡¼­¸¸ »ç¿ë)
+            Control.CheckForIllegalCrossThreadCalls = false;
+            
             InitializeComponent();
             programManager = new ProgramManager();
+            schedulerService = new SchedulerService(programManager);
             currentPrograms = new List<ProgramInfo>();
+            executionHistory = new List<ExecutionHistory>();
+            lastHistoryClearDate = DateTime.Today; // ¿À´Ã ³¯Â¥·Î ÃÊ±âÈ­
+            
+            // ½ºÄÉÁÙ·¯ ÀÌº¥Æ® ¿¬°á
+            schedulerService.ProgramExecuted += OnProgramExecuted;
+            schedulerService.StatusUpdated += OnSchedulerStatusUpdated;
+            
             LoadInitialData();
         }
         #endregion
 
-        #region ì´ˆê¸°í™”
+        #region ÃÊ±âÈ­
         /// <summary>
-        /// ì´ˆê¸° ë°ì´í„°ë¥¼ ë¡œë“œí•©ë‹ˆë‹¤
+        /// ÃÊ±â µ¥ÀÌÅÍ¸¦ ·ÎµåÇÕ´Ï´Ù
         /// </summary>
-        private void LoadInitialData()
+        private async void LoadInitialData()
         {
-            UpdateStatus("í”„ë¡œê·¸ë¨ ê´€ë¦¬ìê°€ ì‹œì‘ë˜ì—ˆìŠµë‹ˆë‹¤.");
+            UpdateStatus("ÇÁ·Î±×·¥ °ü¸®ÀÚ°¡ ½ÃÀÛµÇ¾ú½À´Ï´Ù.");
+            
+            // DB ¿¬°á Å×½ºÆ®
+            try
+            {
+                var dbConnected = await programManager.TestDatabaseConnectionAsync();
+                if (dbConnected)
+                {
+                    UpdateStatus("µ¥ÀÌÅÍº£ÀÌ½º ¿¬°á ¼º°ø");
+                }
+                else
+                {
+                    UpdateStatus("µ¥ÀÌÅÍº£ÀÌ½º ¿¬°á ½ÇÆĞ - ½ÇÇà ÀÌ·ÂÀÌ DB¿¡ ÀúÀåµÇÁö ¾ÊÀ» ¼ö ÀÖ½À´Ï´Ù");
+                }
+            }
+            catch (Exception ex)
+            {
+                UpdateStatus($"µ¥ÀÌÅÍº£ÀÌ½º ¿¬°á Å×½ºÆ® ¿À·ù: {ex.Message}");
+            }
+            
             RefreshProgramList();
+            
+            // ½ºÄÉÁÙ·¯ ÀÚµ¿ ½ÃÀÛ
+            schedulerService.Start();
         }
         #endregion
 
-        #region ì´ë²¤íŠ¸ í•¸ë“¤ëŸ¬
+        #region ÀÌº¥Æ® ÇÚµé·¯
         /// <summary>
-        /// ìƒˆë¡œê³ ì¹¨ ë²„íŠ¼ í´ë¦­ ì´ë²¤íŠ¸
+        /// »õ·Î°íÄ§ ¹öÆ° Å¬¸¯ ÀÌº¥Æ®
         /// </summary>
         private void RefreshButton_Click(object sender, EventArgs e)
         {
             RefreshProgramList();
-            UpdateStatus("í”„ë¡œê·¸ë¨ ëª©ë¡ì´ ìƒˆë¡œê³ ì¹¨ë˜ì—ˆìŠµë‹ˆë‹¤.");
+            schedulerService.RefreshPrograms();
+            UpdateStatus("ÇÁ·Î±×·¥ ¸ñ·ÏÀÌ »õ·Î°íÄ§µÇ¾ú½À´Ï´Ù.");
         }
 
         /// <summary>
-        /// í´ë” ì¶”ê°€ ë²„íŠ¼ í´ë¦­ ì´ë²¤íŠ¸
+        /// ½ºÄÉÁÙ·¯ Åä±Û ¹öÆ° Å¬¸¯ ÀÌº¥Æ®
         /// </summary>
-        private void AddFolderButton_Click(object sender, EventArgs e)
+        private void SchedulerToggleButton_Click(object sender, EventArgs e)
         {
-            ShowAddFolderDialog();
+            if (schedulerService.IsRunning)
+            {
+                schedulerService.Stop();
+                schedulerToggleButton.Text = "½ºÄÉÁÙ·¯ ½ÃÀÛ";
+                schedulerToggleButton.BackColor = UITheme.AccentColor;
+            }
+            else
+            {
+                schedulerService.Start();
+                schedulerToggleButton.Text = "½ºÄÉÁÙ·¯ ÁßÁö";
+                schedulerToggleButton.BackColor = UITheme.ErrorColor;
+            }
         }
 
         /// <summary>
-        /// ë¹„ì£¼ì–¼ ë””ìì´ë„ˆ ì—´ê¸° ë²„íŠ¼ í´ë¦­ ì´ë²¤íŠ¸
-        /// </summary>
-        private void OpenDesignerButton_Click(object sender, EventArgs e)
-        {
-            OpenVisualDesigner();
-        }
-
-        /// <summary>
-        /// ê·¸ë¦¬ë“œ ì…€ í´ë¦­ ì´ë²¤íŠ¸ (ì‹¤í–‰ ë²„íŠ¼)
+        /// ±×¸®µå ¼¿ Å¬¸¯ ÀÌº¥Æ® (½ÇÇà ¹öÆ°)
         /// </summary>
         private void ProgramsGrid_CellClick(object sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
 
-            // ì‹¤í–‰ ë²„íŠ¼ ì»¬ëŸ¼ì¸ì§€ í™•ì¸
+            // ½ÇÇà ¹öÆ° ÄÃ·³ÀÎÁö È®ÀÎ
             if (programsGrid.Columns[e.ColumnIndex].Name == "ExecuteColumn")
             {
                 var programInfo = GetProgramInfoFromRow(e.RowIndex);
@@ -88,7 +134,7 @@ namespace scheduleProgram
         }
 
         /// <summary>
-        /// ê·¸ë¦¬ë“œ ì…€ í¬ë§·íŒ… ì´ë²¤íŠ¸
+        /// ±×¸®µå ¼¿ Æ÷¸ËÆÃ ÀÌº¥Æ®
         /// </summary>
         private void ProgramsGrid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
         {
@@ -97,15 +143,130 @@ namespace scheduleProgram
             var programInfo = GetProgramInfoFromRow(e.RowIndex);
             if (programInfo == null) return;
 
-            // í”„ë¡œê·¸ë¨ë³„ ìƒ‰ìƒ êµ¬ë¶„
+            // ÇÁ·Î±×·¥º° »ö»ó ±¸ºĞ
             var backColor = GetProgramColor(programInfo.ProgramName);
+            
+            // ½ºÄÉÁÙÀÌ È°¼ºÈ­µÈ ÇÁ·Î±×·¥Àº ¾à°£ ´Ù¸¥ »ö»óÀ¸·Î Ç¥½Ã
+            if (programInfo.IsScheduleEnabled)
+            {
+                backColor = System.Drawing.Color.FromArgb(
+                    Math.Max(0, backColor.R - 20),
+                    Math.Min(255, backColor.G + 20),
+                    Math.Max(0, backColor.B - 10)
+                );
+            }
+            
             programsGrid.Rows[e.RowIndex].DefaultCellStyle.BackColor = backColor;
+        }
+
+        /// <summary>
+        /// ±×¸®µå ÆíÁı ½ÃÀÛ ÀÌº¥Æ® - ÆíÁıÀ» ¹æÁöÇÕ´Ï´Ù
+        /// </summary>
+        private void ProgramsGrid_CellBeginEdit(object sender, DataGridViewCellCancelEventArgs e)
+        {
+            // ¸ğµç ÆíÁı ½Ãµµ¸¦ Ãë¼Ò
+            e.Cancel = true;
+        }
+
+        /// <summary>
+        /// ±×¸®µå ´õºíÅ¬¸¯ ÀÌº¥Æ® - ÆíÁı ¸ğµå ÁøÀÔÀ» ¹æÁöÇÕ´Ï´Ù
+        /// </summary>
+        private void ProgramsGrid_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+            // ½ÇÇà ¹öÆ°ÀÌ ¾Æ´Ñ ¼¿À» ´õºíÅ¬¸¯ÇÑ °æ¿ì ÆíÁı ¸ğµå·Î µé¾î°¡Áö ¾Êµµ·Ï ÇÔ
+            if (programsGrid.Columns[e.ColumnIndex].Name != "ExecuteColumn")
+            {
+                // ½ºÄÉÁÙ ¼³Á¤ ´ëÈ­»óÀÚ Ç¥½Ã
+                var programInfo = GetProgramInfoFromRow(e.RowIndex);
+                if (programInfo != null)
+                {
+                    ShowScheduleDialog(programInfo);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Å° ÀÔ·Â ÀÌº¥Æ® - F2, Enter µîÀ¸·Î ÆíÁı ¸ğµå ÁøÀÔÀ» ¹æÁöÇÕ´Ï´Ù
+        /// </summary>
+        private void ProgramsGrid_KeyDown(object sender, KeyEventArgs e)
+        {
+            // F2, Enter, ±âÅ¸ ÆíÁı °ü·Ã Å° ÀÔ·ÂÀ» ¹«½Ã
+            if (e.KeyCode == Keys.F2 || e.KeyCode == Keys.Enter || 
+                e.KeyCode == Keys.Delete || e.KeyCode == Keys.Back)
+            {
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>
+        /// ½ºÄÉÁÙ·¯¿¡¼­ ÇÁ·Î±×·¥ÀÌ ½ÇÇàµÇ¾úÀ» ¶§ ÀÌº¥Æ®
+        /// </summary>
+        private void OnProgramExecuted(object? sender, ProgramExecutedEventArgs e)
+        {
+            try
+            {
+                if (this.IsHandleCreated && !this.IsDisposed)
+                {
+                    this.Invoke(() =>
+                    {
+                        var status = e.Success ? "¼º°ø" : $"½ÇÆĞ ({e.ErrorMessage})";
+                        UpdateStatus($"½ºÄÉÁÙ ½ÇÇà: {e.Program.DisplayName} - {status}");
+                        
+                        // ½ÇÇà ÀÌ·Â Ãß°¡
+                        AddExecutionHistory(e.Program, e.ExecutionTime, e.Success, e.ErrorMessage);
+                        
+                        // ±×¸®µå »õ·Î°íÄ§ (´ÙÀ½ ½ÇÇà ½Ã°£ ¾÷µ¥ÀÌÆ®)
+                        RefreshProgramList();
+                    });
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // ÆûÀÌ ÇØÁ¦µÈ °æ¿ì ¹«½Ã
+            }
+            catch (InvalidOperationException)
+            {
+                // ½º·¹µå °£ È£Ãâ ¹®Á¦ ¹ß»ı ½Ã ¹«½Ã
+            }
+        }
+
+        /// <summary>
+        /// ½ºÄÉÁÙ·¯ »óÅÂ ¾÷µ¥ÀÌÆ® ÀÌº¥Æ®
+        /// </summary>
+        private void OnSchedulerStatusUpdated(object? sender, string message)
+        {
+            try
+            {
+                if (this.IsHandleCreated && !this.IsDisposed)
+                {
+                    this.Invoke(() => UpdateStatus($"½ºÄÉÁÙ·¯: {message}"));
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // ÆûÀÌ ÇØÁ¦µÈ °æ¿ì ¹«½Ã
+            }
+            catch (InvalidOperationException)
+            {
+                // ½º·¹µå °£ È£Ãâ ¹®Á¦ ¹ß»ı ½Ã ¹«½Ã
+            }
+        }
+
+        /// <summary>
+        /// Æû Å©±â º¯°æ ÀÌº¥Æ®
+        /// </summary>
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            AdjustControlSizes();
         }
         #endregion
 
-        #region ë¹„ì¦ˆë‹ˆìŠ¤ ë¡œì§
+        #region ºñÁî´Ï½º ·ÎÁ÷
         /// <summary>
-        /// í”„ë¡œê·¸ë¨ ëª©ë¡ì„ ìƒˆë¡œê³ ì¹¨í•©ë‹ˆë‹¤
+        /// ÇÁ·Î±×·¥ ¸ñ·ÏÀ» »õ·Î°íÄ§ÇÕ´Ï´Ù
         /// </summary>
         private void RefreshProgramList()
         {
@@ -113,73 +274,171 @@ namespace scheduleProgram
             {
                 currentPrograms = programManager.ScanAllPrograms();
                 UpdateProgramsGrid();
-                UpdateStatus($"ì´ {currentPrograms.Count}ê°œì˜ í”„ë¡œê·¸ë¨ì´ ë°œê²¬ë˜ì—ˆìŠµë‹ˆë‹¤.");
+                var scheduledCount = currentPrograms.Count(p => p.IsScheduleEnabled);
+                UpdateStatus($"ÃÑ {currentPrograms.Count}°³ÀÇ ÇÁ·Î±×·¥ÀÌ ¹ß°ßµÇ¾ú½À´Ï´Ù. (½ºÄÉÁÙ: {scheduledCount}°³)");
             }
             catch (Exception ex)
             {
-                ShowError($"í”„ë¡œê·¸ë¨ ëª©ë¡ ë¡œë“œ ì‹¤íŒ¨: {ex.Message}");
+                ShowError($"ÇÁ·Î±×·¥ ¸ñ·Ï ·Îµå ½ÇÆĞ: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// í”„ë¡œê·¸ë¨ì„ ì‹¤í–‰í•©ë‹ˆë‹¤
+        /// ÇÁ·Î±×·¥À» ½ÇÇàÇÕ´Ï´Ù
         /// </summary>
         private void ExecuteProgram(ProgramInfo programInfo)
         {
+            Console.WriteLine($"MainForm.ExecuteProgram È£Ãâ: {programInfo.ProgramName}.{programInfo.DisplayName}");
+            
+            // ½ÃÀÛ ·Î±× Ãß°¡
+            AddExecutionStartHistory(programInfo, DateTime.Now);
+            
             try
             {
+                // ProgramManager¿¡¼­ ½ÇÇà (DB ÀúÀå Æ÷ÇÔ)
                 programManager.ExecuteProgram(programInfo);
-                UpdateStatus($"í”„ë¡œê·¸ë¨ ì‹¤í–‰: {programInfo.ProgramName} - {programInfo.DisplayName}");
+                
+                // Á¾·á ·Î±× Ãß°¡ (¼º°ø)
+                AddExecutionEndHistory(programInfo, DateTime.Now, true, null);
+                
+                UpdateStatus($"ÇÁ·Î±×·¥ ½ÇÇà: {programInfo.ProgramName} - {programInfo.DisplayName}");
             }
             catch (Exception ex)
             {
-                ShowError($"í”„ë¡œê·¸ë¨ ì‹¤í–‰ ì‹¤íŒ¨: {ex.Message}");
+                Console.WriteLine($"MainForm.ExecuteProgram ¿¹¿Ü: {ex.Message}");
+                
+                // Á¾·á ·Î±× Ãß°¡ (½ÇÆĞ)
+                AddExecutionEndHistory(programInfo, DateTime.Now, false, ex.Message);
+                
+                ShowError($"ÇÁ·Î±×·¥ ½ÇÇà ½ÇÆĞ: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// ìƒˆ í´ë” ì¶”ê°€ ëŒ€í™”ìƒìë¥¼ í‘œì‹œí•©ë‹ˆë‹¤
+        /// ½ÇÇà ½ÃÀÛ ÀÌ·ÂÀ» Ãß°¡ÇÕ´Ï´Ù
         /// </summary>
-        private void ShowAddFolderDialog()
+        private void AddExecutionStartHistory(ProgramInfo program, DateTime executionTime)
         {
-            var inputDialog = new SimpleInputDialog("ìƒˆ í”„ë¡œê·¸ë¨ í´ë” ì´ë¦„ì„ ì…ë ¥í•˜ì„¸ìš”:", "í´ë” ì¶”ê°€", "newProgram");
+            // ³¯Â¥°¡ ¹Ù²î¾úÀ¸¸é ÀÌ·Â ÃÊ±âÈ­
+            CheckAndClearDailyHistory();
 
-            if (inputDialog.ShowDialog() == DialogResult.OK)
+            var startHistory = new ExecutionHistory
             {
-                var folderName = inputDialog.InputText;
-                if (!string.IsNullOrWhiteSpace(folderName))
-                {
-                    if (programManager.CreateProgramFolder(folderName))
-                    {
-                        RefreshProgramList();
-                        UpdateStatus($"ìƒˆ í´ë” '{folderName}'ì´(ê°€) ìƒì„±ë˜ì—ˆìŠµë‹ˆë‹¤.");
-                    }
-                    else
-                    {
-                        ShowError("í´ë” ìƒì„±ì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤. ì´ë¯¸ ì¡´ì¬í•˜ê±°ë‚˜ ì˜ëª»ëœ ì´ë¦„ì¼ ìˆ˜ ìˆìŠµë‹ˆë‹¤.");
-                    }
-                }
+                ProgramName = program.ProgramName,
+                DisplayName = program.DisplayName,
+                ExecutionTime = executionTime,
+                Success = true, // ½ÃÀÛÀº Ç×»ó ¼º°øÀ¸·Î °£ÁÖ
+                ErrorMessage = null,
+                Status = "start"
+            };
+
+            // ÃÖ½Å ÀÌ·ÂÀ» ¸Ç ¾Õ¿¡ Ãß°¡
+            executionHistory.Insert(0, startHistory);
+
+            // ÃÖ´ë °³¼ö ÃÊ°ú½Ã ¿À·¡µÈ ÀÌ·Â Á¦°Å
+            if (executionHistory.Count > MaxHistoryCount)
+            {
+                executionHistory.RemoveAt(executionHistory.Count - 1);
             }
+
+            UpdateHistoryDisplay();
         }
 
         /// <summary>
-        /// ë¹„ì£¼ì–¼ ë””ìì´ë„ˆë¥¼ ì—½ë‹ˆë‹¤
+        /// ½ÇÇà Á¾·á ÀÌ·ÂÀ» Ãß°¡ÇÕ´Ï´Ù
         /// </summary>
-        private void OpenVisualDesigner()
+        private void AddExecutionEndHistory(ProgramInfo program, DateTime executionTime, bool success, string? errorMessage)
         {
-            try
+            var endHistory = new ExecutionHistory
             {
-                MessageBox.Show("ë¹„ì£¼ì–¼ í¼ ë””ìì´ë„ˆëŠ” ê°œë°œ ì¤‘ì…ë‹ˆë‹¤.", "ì•Œë¦¼", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                UpdateStatus("ë¹„ì£¼ì–¼ í¼ ë””ìì´ë„ˆ ê¸°ëŠ¥ì€ ê°œë°œ ì¤‘ì…ë‹ˆë‹¤.");
+                ProgramName = program.ProgramName,
+                DisplayName = program.DisplayName,
+                ExecutionTime = executionTime,
+                Success = success,
+                ErrorMessage = errorMessage,
+                Status = "end"
+            };
+
+            // ÃÖ½Å ÀÌ·ÂÀ» ¸Ç ¾Õ¿¡ Ãß°¡
+            executionHistory.Insert(0, endHistory);
+
+            // ÃÖ´ë °³¼ö ÃÊ°ú½Ã ¿À·¡µÈ ÀÌ·Â Á¦°Å
+            if (executionHistory.Count > MaxHistoryCount)
+            {
+                executionHistory.RemoveAt(executionHistory.Count - 1);
             }
-            catch (Exception ex)
+
+            UpdateHistoryDisplay();
+        }
+
+        /// <summary>
+        /// ½ÇÇà ÀÌ·ÂÀ» Ãß°¡ÇÕ´Ï´Ù (½ºÄÉÁÙ·¯¿ë)
+        /// </summary>
+        private void AddExecutionHistory(ProgramInfo program, DateTime executionTime, bool success, string? errorMessage)
+        {
+            // ½ºÄÉÁÙ·¯ ½ÇÇàÀº ½ÃÀÛ/Á¾·á¸¦ º°µµ·Î Ãß°¡ÇÏÁö ¾Ê°í °á°ú¸¸ Ãß°¡
+            CheckAndClearDailyHistory();
+
+            var history = new ExecutionHistory
             {
-                ShowError($"ë””ìì´ë„ˆ ì—´ê¸° ì‹¤íŒ¨: {ex.Message}");
+                ProgramName = program.ProgramName,
+                DisplayName = program.DisplayName,
+                ExecutionTime = executionTime,
+                Success = success,
+                ErrorMessage = errorMessage,
+                Status = "end" // ½ºÄÉÁÙ·¯´Â Á¾·á °á°ú¸¸ Ç¥½Ã
+            };
+
+            // ÃÖ½Å ÀÌ·ÂÀ» ¸Ç ¾Õ¿¡ Ãß°¡
+            executionHistory.Insert(0, history);
+
+            // ÃÖ´ë °³¼ö ÃÊ°ú½Ã ¿À·¡µÈ ÀÌ·Â Á¦°Å
+            if (executionHistory.Count > MaxHistoryCount)
+            {
+                executionHistory.RemoveAt(executionHistory.Count - 1);
+            }
+
+            UpdateHistoryDisplay();
+        }
+
+        /// <summary>
+        /// ÀÏÀÏ ÀÌ·Â ÃÊ±âÈ­ Ã¼Å©
+        /// </summary>
+        private void CheckAndClearDailyHistory()
+        {
+            var today = DateTime.Today;
+            if (today > lastHistoryClearDate)
+            {
+                executionHistory.Clear();
+                lastHistoryClearDate = today;
+                UpdateStatus($"»õ·Î¿î ³¯({today:yyyy-MM-dd})ÀÌ ½ÃÀÛµÇ¾î ½ÇÇà ÀÌ·ÂÀÌ ÃÊ±âÈ­µÇ¾ú½À´Ï´Ù.");
             }
         }
 
         /// <summary>
-        /// í–‰ ì¸ë±ìŠ¤ë¡œë¶€í„° í”„ë¡œê·¸ë¨ ì •ë³´ë¥¼ ê°€ì ¸ì˜µë‹ˆë‹¤
+        /// ½ºÄÉÁÙ ¼³Á¤ ´ëÈ­»óÀÚ¸¦ Ç¥½ÃÇÕ´Ï´Ù
+        /// </summary>
+        private void ShowScheduleDialog(ProgramInfo programInfo)
+        {
+            var dialog = new ScheduleDialog(programInfo);
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                schedulerService.UpdateProgramSchedule(
+                    programInfo,
+                    dialog.SelectedScheduleType,
+                    dialog.SelectedTime,
+                    dialog.IntervalMinutes,
+                    dialog.IsEnabled,
+                    dialog.SelectedDayOfWeek,
+                    dialog.SelectedDayOfMonth,
+                    dialog.IsLastDayOfMonth
+                );
+                RefreshProgramList();
+            }
+        }
+
+        /// <summary>
+        /// Çà ÀÎµ¦½º·ÎºÎÅÍ ÇÁ·Î±×·¥ Á¤º¸¸¦ °¡Á®¿É´Ï´Ù
         /// </summary>
         private ProgramInfo? GetProgramInfoFromRow(int rowIndex)
         {
@@ -190,7 +449,7 @@ namespace scheduleProgram
         }
 
         /// <summary>
-        /// í”„ë¡œê·¸ë¨ëª…ì— ë”°ë¥¸ ìƒ‰ìƒì„ ë°˜í™˜í•©ë‹ˆë‹¤
+        /// ÇÁ·Î±×·¥¸í¿¡ µû¸¥ »ö»óÀ» ¹İÈ¯ÇÕ´Ï´Ù
         /// </summary>
         private System.Drawing.Color GetProgramColor(string programName)
         {
@@ -208,9 +467,9 @@ namespace scheduleProgram
         }
         #endregion
 
-        #region UI ì—…ë°ì´íŠ¸
+        #region UI ¾÷µ¥ÀÌÆ®
         /// <summary>
-        /// í”„ë¡œê·¸ë¨ ê·¸ë¦¬ë“œë¥¼ ì—…ë°ì´íŠ¸í•©ë‹ˆë‹¤
+        /// ÇÁ·Î±×·¥ ±×¸®µå¸¦ ¾÷µ¥ÀÌÆ®ÇÕ´Ï´Ù
         /// </summary>
         private void UpdateProgramsGrid()
         {
@@ -218,21 +477,117 @@ namespace scheduleProgram
 
             foreach (var program in currentPrograms)
             {
+                var nextExecution = program.NextExecution?.ToString("MM-dd HH:mm") ?? "-";
                 var rowIndex = programsGrid.Rows.Add(
                     program.ProgramName,
                     program.DisplayName,
                     program.Memo,
-                    "ì‹¤í–‰"
+                    program.ScheduleDescription,
+                    nextExecution,
+                    "½ÇÇà"
                 );
 
-                // ë§ˆì§€ë§‰ ìˆ˜ì •ì¼ì‹œë¥¼ íˆ´íŒìœ¼ë¡œ ì¶”ê°€
+                // ¸¶Áö¸· ¼öÁ¤ÀÏ½Ã¸¦ ÅøÆÁÀ¸·Î Ãß°¡
                 programsGrid.Rows[rowIndex].Cells[0].ToolTipText =
-                    $"ë§ˆì§€ë§‰ ìˆ˜ì •: {program.LastModified:yyyy-MM-dd HH:mm:ss}";
+                    $"¸¶Áö¸· ¼öÁ¤: {program.LastModified:yyyy-MM-dd HH:mm:ss}\n´õºíÅ¬¸¯ÇÏ¿© ½ºÄÉÁÙ ¼³Á¤";
             }
         }
 
         /// <summary>
-        /// ìƒíƒœë°” ë©”ì‹œì§€ë¥¼ ì—…ë°ì´íŠ¸í•©ë‹ˆë‹¤
+        /// ½ÇÇà ÀÌ·Â Ç¥½Ã¸¦ ¾÷µ¥ÀÌÆ®ÇÕ´Ï´Ù
+        /// </summary>
+        private void UpdateHistoryDisplay()
+        {
+            historyListBox.Items.Clear();
+            
+            foreach (var history in executionHistory)
+            {
+                historyListBox.Items.Add(history.DisplayText);
+            }
+
+            // Á¦¸ñ¿¡ ¿À´Ã ³¯Â¥¿Í ÀÌ·Â °³¼ö Ç¥½Ã
+            historyTitleLabel.Text = $"½ÇÇà ÀÌ·Â {DateTime.Today:MM/dd} ({executionHistory.Count})";
+        }
+
+        /// <summary>
+        /// ÄÁÆ®·Ñ Å©±â¸¦ µ¿ÀûÀ¸·Î Á¶Á¤ÇÕ´Ï´Ù
+        /// </summary>
+        private void AdjustControlSizes()
+        {
+            if (this.WindowState == FormWindowState.Minimized)
+                return;
+
+            var clientWidth = this.ClientSize.Width;
+            var clientHeight = this.ClientSize.Height;
+
+            // »ó´Ü ÆĞ³Î Å©±â Á¶Á¤
+            if (topPanel != null)
+            {
+                topPanel.Width = clientWidth - (UITheme.DefaultPadding * 2);
+                
+                // »ó´Ü ÆĞ³Î ³»ÀÇ ¹öÆ°µéÀ» ¿À¸¥ÂÊ ³¡¿¡ À§Ä¡
+                AdjustTopPanelButtons();
+            }
+
+            // ±×¸®µå¿Í ÀÌ·Â ÆĞ³Î Å©±â Á¶Á¤
+            if (programsGrid != null && historyPanel != null)
+            {
+                var historyPanelWidth = 350; // ÀÌ·Â ÆĞ³Î ³Êºñ
+                var availableWidth = clientWidth - (UITheme.DefaultPadding * 3) - historyPanelWidth;
+                var availableHeight = clientHeight - 160; // »óÅÂ¹Ù °ø°£ Ãß°¡ (140¡æ160)
+                
+                // ÀÌ·Â ÆĞ³ÎÀ» ±×¸®µå¿Í °°Àº ³ôÀÌ¿¡¼­ ½ÃÀÛ
+                var historyStartY = 90; // ±×¸®µå¿Í µ¿ÀÏÇÑ ½ÃÀÛ ³ôÀÌ
+
+                // ÇÁ·Î±×·¥ ±×¸®µå Å©±â Á¶Á¤ (ÃÖ¼Ò ³Êºñ Áõ°¡)
+                programsGrid.Width = Math.Max(800, availableWidth); // ÃÖ¼Ò ³Êºñ: 600¡æ800
+                programsGrid.Height = availableHeight;
+
+                // ÀÌ·Â ÆĞ³Î À§Ä¡¿Í Å©±â Á¶Á¤ (±×¸®µå¿Í °°Àº ³ôÀÌ¿¡¼­ ½ÃÀÛ)
+                historyPanel.Location = new System.Drawing.Point(programsGrid.Width + UITheme.DefaultPadding * 2, historyStartY);
+                historyPanel.Width = historyPanelWidth;
+                historyPanel.Height = availableHeight; // ±×¸®µå¿Í °°Àº ³ôÀÌ
+                
+                // ÀÌ·Â ¸®½ºÆ®¹Ú½º Å©±âµµ ÇÔ²² Á¶Á¤
+                if (historyListBox != null)
+                {
+                    historyListBox.Width = historyPanelWidth - 20;
+                    historyListBox.Height = historyPanel.Height - 60; // Á¦¸ñ ¶óº§ °ø°£ È®º¸
+                }
+            }
+        }
+
+        /// <summary>
+        /// »ó´Ü ÆĞ³ÎÀÇ ¹öÆ°µéÀ» ¿À¸¥ÂÊ ³¡¿¡ ¹èÄ¡
+        /// </summary>
+        private void AdjustTopPanelButtons()
+        {
+            if (topPanel == null || refreshButton == null || schedulerToggleButton == null)
+                return;
+
+            var panelWidth = topPanel.Width;
+            var buttonSpacing = 12; // ¹öÆ° °£°İ Á¶±İ Áõ°¡
+            var rightMargin = UITheme.DefaultPadding; // ¿À¸¥ÂÊ ¿©¹é
+
+            // ½ºÄÉÁÙ·¯ Åä±Û ¹öÆ°À» °¡Àå ¿À¸¥ÂÊ ³¡¿¡ À§Ä¡
+            schedulerToggleButton.Location = new System.Drawing.Point(
+                panelWidth - schedulerToggleButton.Width - rightMargin,
+                12
+            );
+
+            // »õ·Î°íÄ§ ¹öÆ°À» ½ºÄÉÁÙ·¯ ¹öÆ° ¿ŞÂÊ¿¡ À§Ä¡
+            refreshButton.Location = new System.Drawing.Point(
+                schedulerToggleButton.Location.X - refreshButton.Width - buttonSpacing,
+                12
+            );
+
+            // ¹öÆ°µéÀÌ »ó´Ü ÆĞ³Î ¾ÕÂÊÀ¸·Î ¿Àµµ·Ï Z-order Á¶Á¤
+            schedulerToggleButton.BringToFront();
+            refreshButton.BringToFront();
+        }
+
+        /// <summary>
+        /// »óÅÂ¹Ù ¸Ş½ÃÁö¸¦ ¾÷µ¥ÀÌÆ®ÇÕ´Ï´Ù
         /// </summary>
         private void UpdateStatus(string message)
         {
@@ -240,18 +595,27 @@ namespace scheduleProgram
         }
 
         /// <summary>
-        /// ì˜¤ë¥˜ ë©”ì‹œì§€ë¥¼ í‘œì‹œí•©ë‹ˆë‹¤
+        /// ¿À·ù ¸Ş½ÃÁö¸¦ Ç¥½ÃÇÕ´Ï´Ù
         /// </summary>
         private void ShowError(string message)
         {
-            MessageBox.Show(message, "ì˜¤ë¥˜", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            UpdateStatus($"ì˜¤ë¥˜: {message}");
+            MessageBox.Show(message, "¿À·ù", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            UpdateStatus($"¿À·ù: {message}");
+        }
+        #endregion
+
+        #region Æû ÀÌº¥Æ®
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            schedulerService.Stop();
+            schedulerService.Dispose();
+            base.OnFormClosing(e);
         }
         #endregion
     }
 
     /// <summary>
-    /// ê°„ë‹¨í•œ ì…ë ¥ ëŒ€í™”ìƒì
+    /// °£´ÜÇÑ ÀÔ·Â ´ëÈ­»óÀÚ
     /// </summary>
     public partial class SimpleInputDialog : Form
     {
@@ -290,7 +654,7 @@ namespace scheduleProgram
 
             var okButton = new Button()
             {
-                Text = "í™•ì¸",
+                Text = "È®ÀÎ",
                 DialogResult = DialogResult.OK,
                 Location = new System.Drawing.Point(217, 75),
                 Size = new System.Drawing.Size(75, 23)
@@ -298,7 +662,7 @@ namespace scheduleProgram
 
             var cancelButton = new Button()
             {
-                Text = "ì·¨ì†Œ",
+                Text = "Ãë¼Ò",
                 DialogResult = DialogResult.Cancel,
                 Location = new System.Drawing.Point(297, 75),
                 Size = new System.Drawing.Size(75, 23)

@@ -5,7 +5,7 @@
     <Compile Update="Class1.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Update="VisualFormDesigner.cs">
+    <Compile Update="UI\ScheduleDialog.cs">
       <SubType>Form</SubType>
     </Compile>
   </ItemGroup>
