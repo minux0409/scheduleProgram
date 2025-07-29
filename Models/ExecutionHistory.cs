@@ -12,10 +12,17 @@ namespace scheduleProgram
         public DateTime ExecutionTime { get; set; }
         public bool Success { get; set; }
         public string? ErrorMessage { get; set; }
-        public string Status { get; set; } = "end"; // "start" 또는 "end"
+        public string Status { get; set; } = "end"; // "start", "end", "log"
 
-        public string StatusText => Status == "start" ? "시작" : (Success ? "종료" : $"실패: {ErrorMessage}");
+        public string StatusText => Status switch
+        {
+            "start" => "시작",
+            "log" => ErrorMessage ?? "로그",
+            _ => Success ? "성공" : $"실패: {ErrorMessage}"
+        };
         
-        public string DisplayText => $"[{ExecutionTime:HH:mm:ss}] {ProgramName}.{DisplayName} - {StatusText}";
+        public string DisplayText => Status == "log" 
+            ? $"[{ExecutionTime:HH:mm:ss}] {ProgramName} - {ErrorMessage}"
+            : $"[{ExecutionTime:HH:mm:ss}] {ProgramName}.{DisplayName} - {StatusText}";
     }
 }

@@ -29,6 +29,17 @@ namespace scheduleProgram
         private List<ExecutionHistory> executionHistory;
         private DateTime lastHistoryClearDate; // 마지막 이력 초기화 날짜
         private const int MaxHistoryCount = 200; // 최대 이력 개수 증가
+        
+        // Console 로그 관련 컨트롤
+        private Panel consolePanel;
+        private Label consoleTitleLabel;
+        private TextBox consoleTextBox;
+        private List<string> consoleMessages;
+        private const int MaxConsoleMessages = 1000;
+        private readonly object consoleLock = new object();
+        
+        // 정적 인스턴스 참조 (로그 메시지 전달용)
+        private static MainForm? _instance;
         #endregion
 
         #region 생성자
@@ -42,7 +53,11 @@ namespace scheduleProgram
             schedulerService = new SchedulerService(programManager);
             currentPrograms = new List<ProgramInfo>();
             executionHistory = new List<ExecutionHistory>();
-            lastHistoryClearDate = DateTime.Today; // 오늘 날짜로 초기화
+            consoleMessages = new List<string>();
+            lastHistoryClearDate = DateTime.Today;
+            
+            // 정적 인스턴스 설정
+            _instance = this;
             
             // 스케줄러 이벤트 연결
             schedulerService.ProgramExecuted += OnProgramExecuted;
@@ -457,10 +472,10 @@ namespace scheduleProgram
             var colors = new[]
             {
                 UITheme.LightColor,
-                System.Drawing.Color.FromArgb(240, 248, 255), // AliceBlue
-                System.Drawing.Color.FromArgb(250, 240, 230), // Linen
-                System.Drawing.Color.FromArgb(245, 255, 250), // MintCream
-                System.Drawing.Color.FromArgb(255, 250, 240), // FloralWhite
+                System.Drawing.Color.FromArgb(240, 248, 255),
+                System.Drawing.Color.FromArgb(250, 240, 230),
+                System.Drawing.Color.FromArgb(245, 255, 250),
+                System.Drawing.Color.FromArgb(255, 250, 240),
             };
 
             return colors[Math.Abs(hash) % colors.Length];
@@ -609,7 +624,75 @@ namespace scheduleProgram
         {
             schedulerService.Stop();
             schedulerService.Dispose();
+            
+            // 정적 인스턴스 정리
+            _instance = null;
+            
             base.OnFormClosing(e);
+        }
+        #endregion
+
+        #region 로그 관련 메서드
+        private void ClearConsoleMessages()
+        {
+            lock (consoleLock)
+            {
+                consoleMessages.Clear();
+            }
+        }
+
+        /// <summary>
+        /// 정적 메서드: 외부에서 로그 메시지를 실행 이력에 추가
+        /// </summary>
+        public static void LogToHistory(string programName, string message)
+        {
+            if (_instance != null)
+            {
+                _instance.AddLogToHistory(programName, message);
+            }
+        }
+
+        /// <summary>
+        /// 로그 메시지를 실행 이력에 추가
+        /// </summary>
+        private void AddLogToHistory(string programName, string message)
+        {
+            try
+            {
+                if (this.InvokeRequired)
+                {
+                    this.Invoke(() => AddLogToHistory(programName, message));
+                    return;
+                }
+
+                CheckAndClearDailyHistory();
+
+                var logHistory = new ExecutionHistory
+                {
+                    ProgramName = programName,
+                    DisplayName = "로그",
+                    ExecutionTime = DateTime.Now,
+                    Success = true,
+                    ErrorMessage = message, // 메시지를 ErrorMessage 필드에 저장
+                    Status = "log"
+                };
+
+                // 최신 이력을 맨 앞에 추가
+                executionHistory.Insert(0, logHistory);
+
+                // 최대 개수 초과시 오래된 이력 제거
+                if (executionHistory.Count > MaxHistoryCount)
+                {
+                    executionHistory.RemoveAt(executionHistory.Count - 1);
+                }
+
+                UpdateHistoryDisplay();
+            }
+            catch (Exception ex)
+            {
+                // 로그 추가 실패 시 무시 (무한 루프 방지)
+                System.Diagnostics.Debug.WriteLine($"로그 추가 실패: {ex.Message}");
+            }
         }
         #endregion
     }
