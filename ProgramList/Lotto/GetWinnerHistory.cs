@@ -154,7 +154,7 @@ namespace scheduleProgram.ProgramList.Lotto
                 Console.WriteLine(recommendStartMsg);
                 MainForm.LogToHistory(programName, recommendStartMsg);
                 
-                // 최신 회차를 기준으로 다음 회차의 추천번호 계산
+                // 4. 최신 회차를 기준으로 다음 회차의 추천번호 계산
                 var latestRoundForRecommend = await _dbService.GetLatestRoundAsync();
                 var nextRecommendRound = latestRoundForRecommend + 1;
                 
@@ -166,6 +166,18 @@ namespace scheduleProgram.ProgramList.Lotto
                 var recommendCompleteMsg = "🎯 추천번호 계산 및 저장 완료!";
                 Console.WriteLine(recommendCompleteMsg);
                 MainForm.LogToHistory(programName, recommendCompleteMsg);
+
+                // 5. 번호별 등장 간격 계산 및 저장
+                var frequencyStartMsg = "📊 번호별 등장 간격 계산 및 저장을 시작합니다...";
+                Console.WriteLine(frequencyStartMsg);
+                MainForm.LogToHistory(programName, frequencyStartMsg);
+                
+                await _dbService.CalculateAndSaveNumberFrequencyAsync();
+                
+                var frequencyCompleteMsg = "📊 번호별 등장 간격 계산 및 저장 완료!";
+                Console.WriteLine(frequencyCompleteMsg);
+                MainForm.LogToHistory(programName, frequencyCompleteMsg);
+
             }
             catch (Exception ex)
             {

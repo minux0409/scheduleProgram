@@ -289,17 +289,6 @@ namespace scheduleProgram.Services
                 // 4. DB 업데이트
                 var updated = await UpdateNumberProbabilityAsync(probabilityData);
 
-                if (updated)
-                {
-                    // 확률 정보 출력
-                    var sortedByProbability = probabilityData.OrderByDescending(x => x.Value.Probability).Take(10);
-                    Console.WriteLine("🎯 확률 높은 숫자 TOP 10:");
-                    foreach (var item in sortedByProbability)
-                    {
-                        Console.WriteLine($"   숫자 {item.Key}: {item.Value.Probability:F2}% (당첨횟수: {item.Value.Count})");
-                    }
-                }
-
                 return updated;
             }
             catch (Exception ex)
@@ -612,13 +601,6 @@ namespace scheduleProgram.Services
 
                 if (saved)
                 {
-                    // 확률 및 순위 정보 출력
-                    Console.WriteLine($"🎯 {targetRound}회차 당첨번호들의 예상 확률 및 순위:");
-                    foreach (var data in rateData.OrderBy(x => x.Seq))
-                    {
-                        Console.WriteLine($"   seq {data.Seq}: 번호 {data.Number} → {data.Probability:F2}% (순위: {data.Rank}/45)");
-                    }
-                    
                     var avgProbability = rateData.Average(x => x.Probability);
                     var avgRank = rateData.Average(x => x.Rank);
                     Console.WriteLine($"   평균 확률: {avgProbability:F2}% (이론값: {100.0/45:F2}%)");
@@ -683,29 +665,9 @@ namespace scheduleProgram.Services
 
                 if (saved)
                 {
-                    // TOP 10 추천번호 출력
-                    var top10 = recommendData.OrderBy(x => x.Rank).ThenBy(x => x.Number).Take(10);
-                    Console.WriteLine($"🎯 {targetRound}회차 추천번호 TOP 10:");
-                    foreach (var data in top10)
-                    {
-                        Console.WriteLine($"   순위 {data.Rank}: 번호 {data.Number} → {data.Probability:F2}%");
-                    }
-                    
                     var avgProbability = recommendData.Average(x => x.Probability);
                     Console.WriteLine($"   전체 평균 확률: {avgProbability:F2}% (이론값: {100.0/45:F2}%)");
                     Console.WriteLine($"   총 {recommendData.Count}개 숫자의 확률 및 순위 저장 완료");
-                    
-                    // 동일 순위 그룹 정보 출력
-                    var rankGroups = recommendData.GroupBy(x => x.Rank).Where(g => g.Count() > 1).Take(3);
-                    if (rankGroups.Any())
-                    {
-                        Console.WriteLine($"   🎲 동일 순위 그룹:");
-                        foreach (var group in rankGroups)
-                        {
-                            var numbers = string.Join(", ", group.OrderBy(x => x.Number).Select(x => x.Number));
-                            Console.WriteLine($"     순위 {group.Key}: {numbers} (확률: {group.First().Probability:F2}%)");
-                        }
-                    }
                 }
 
                 return saved;
@@ -809,6 +771,148 @@ namespace scheduleProgram.Services
 
             return rankMapping;
         }
+
+        /// <summary>
+        /// 각 번호별로 마지막 등장 회차와 간격을 계산하고 저장합니다
+        /// </summary>
+        public async Task<bool> CalculateAndSaveNumberFrequencyAsync()
+        {
+            try
+            {
+                Console.WriteLine("📊 번호별 마지막 등장 간격 계산 시작...");
+
+                // 1. 전체 최신 회차 조회
+                var latestRound = await GetLatestRoundAsync();
+                if (latestRound == 0)
+                {
+                    Console.WriteLine("⚠️ 회차 데이터가 없어 간격 계산을 건너뜁니다.");
+                    return false;
+                }
+
+                Console.WriteLine($"📈 최신 회차: {latestRound}");
+
+                // 2. 각 번호별 마지막 등장 회차 조회
+                var numberFrequencies = await GetNumberLastRoundsAsync();
+
+                // 3. 간격 계산 (최신 회차 - 마지막 등장 회차)
+                foreach (var frequency in numberFrequencies)
+                {
+                    frequency.Frequency = latestRound - frequency.LastRound;
+                }
+
+                // 4. DB에 저장
+                var saved = await SaveNumberFrequencyAsync(numberFrequencies);
+
+                if (saved)
+                {
+                    Console.WriteLine($"✅ 총 {numberFrequencies.Count}개 번호의 등장 간격 저장 완료");
+                }
+
+                return saved;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ 번호별 등장 간격 계산 실패: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 각 번호별 마지막 등장 회차를 조회합니다
+        /// </summary>
+        private async Task<List<NumberFrequency>> GetNumberLastRoundsAsync()
+        {
+            var frequencies = new List<NumberFrequency>();
+
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                // 1~45까지 각 번호별로 마지막 등장 회차 조회
+                for (int number = 1; number <= 45; number++)
+                {
+                    var query = @"
+                        SELECT MAX(round) as lastRound 
+                        FROM winner_history 
+                        WHERE number = @number AND bonusFlag = 'N'";
+
+                    using var command = new MySqlCommand(query, connection);
+                    command.Parameters.AddWithValue("@number", number);
+                    
+                    var result = await command.ExecuteScalarAsync();
+                    var lastRound = result == DBNull.Value ? 0 : Convert.ToInt32(result);
+
+                    frequencies.Add(new NumberFrequency
+                    {
+                        Number = number,
+                        LastRound = lastRound,
+                        Frequency = 0 // 나중에 계산됨
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"번호별 마지막 등장 회차 조회 실패: {ex.Message}");
+            }
+
+            return frequencies;
+        }
+
+        /// <summary>
+        /// number_frequency 테이블에 번호별 등장 간격을 저장합니다
+        /// </summary>
+        public async Task<bool> SaveNumberFrequencyAsync(List<NumberFrequency> frequencies)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                using var transaction = await connection.BeginTransactionAsync();
+                try
+                {
+                    // 1단계: 기존 데이터 전체 삭제
+                    var deleteQuery = "DELETE FROM number_frequency";
+                    using var deleteCommand = new MySqlCommand(deleteQuery, connection, transaction);
+                    var deletedRows = await deleteCommand.ExecuteNonQueryAsync();
+                    Console.WriteLine($"🗑️ 기존 번호 간격 데이터 삭제: {deletedRows}행");
+
+                    // 2단계: 새로운 데이터 INSERT
+                    var insertQuery = @"
+                        INSERT INTO number_frequency (number, lastRound, frequency, inDate) 
+                        VALUES (@number, @lastRound, @frequency, NOW())";
+
+                    int insertedCount = 0;
+                    foreach (var frequency in frequencies)
+                    {
+                        using var insertCommand = new MySqlCommand(insertQuery, connection, transaction);
+                        insertCommand.Parameters.AddWithValue("@number", frequency.Number);
+                        insertCommand.Parameters.AddWithValue("@lastRound", frequency.LastRound);
+                        insertCommand.Parameters.AddWithValue("@frequency", frequency.Frequency);
+                        
+                        await insertCommand.ExecuteNonQueryAsync();
+                        insertedCount++;
+                    }
+
+                    await transaction.CommitAsync();
+                    Console.WriteLine($"✅ 새로운 번호 간격 데이터 저장 완료: {insertedCount}행");
+                    Console.WriteLine($"📊 번호 간격 데이터 업데이트 완료 - 삭제: {deletedRows}행, 추가: {insertedCount}행");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync();
+                    Console.WriteLine($"❌ 번호 간격 저장 트랜잭션 롤백: {ex.Message}");
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ 번호 간격 데이터 저장 실패: {ex.Message}");
+                return false;
+            }
+        }
     }
 
     /// <summary>
@@ -849,5 +953,15 @@ namespace scheduleProgram.Services
         public int Number { get; set; }       // 추천번호
         public double Probability { get; set; } // 예상 확률 (%)
         public int Rank { get; set; }         // 전체 45개 숫자 중 확률 순위 (1=가장 높음)
+    }
+
+    /// <summary>
+    /// 번호별 마지막 등장 이력 데이터 모델
+    /// </summary>
+    public class NumberFrequency
+    {
+        public int Number { get; set; }       // 번호 (1~45)
+        public int LastRound { get; set; }    // 해당 번호가 마지막으로 나온 회차
+        public int Frequency { get; set; }    // 최신 회차로부터 몇 번 전에 나왔는지 (간격)
     }
 }
