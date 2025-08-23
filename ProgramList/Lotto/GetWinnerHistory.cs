@@ -178,6 +178,17 @@ namespace scheduleProgram.ProgramList.Lotto
                 Console.WriteLine(frequencyCompleteMsg);
                 MainForm.LogToHistory(programName, frequencyCompleteMsg);
 
+                // 6. 가중치 적용 확률 계산 및 저장
+                var weightedStartMsg = "🎯 가중치 적용 확률 계산 및 저장을 시작합니다...";
+                Console.WriteLine(weightedStartMsg);
+                MainForm.LogToHistory(programName, weightedStartMsg);
+                
+                await _dbService.CalculateAndSaveWeightedProbabilitiesAsync();
+                
+                var weightedCompleteMsg = "🎯 가중치 적용 확률 계산 및 저장 완료!";
+                Console.WriteLine(weightedCompleteMsg);
+                MainForm.LogToHistory(programName, weightedCompleteMsg);
+
             }
             catch (Exception ex)
             {

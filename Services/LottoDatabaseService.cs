@@ -913,6 +913,320 @@ namespace scheduleProgram.Services
                 return false;
             }
         }
+
+        /// <summary>
+        /// number_probability_new 테이블에 가중치가 적용된 확률 계산 및 저장
+        /// </summary>
+        public async Task<bool> CalculateAndSaveWeightedProbabilitiesAsync()
+        {
+            try
+            {
+                Console.WriteLine("🎯 가중치 적용 확률 계산 시작...");
+
+                // 1. 최신 회차 + 1 조회
+                var latestRound = await GetLatestRoundAsync();
+                var nextRound = latestRound + 1;
+
+                // 2. 이미 해당 회차 데이터가 존재하는지 확인
+                var exists = await IsWeightedProbabilityExistsAsync(nextRound);
+                if (exists)
+                {
+                    Console.WriteLine($"⚠️ {nextRound}회차 가중치 확률 데이터가 이미 존재합니다. 계산을 건너뜁니다.");
+                    return true;
+                }
+
+                Console.WriteLine($"📊 {nextRound}회차 가중치 확률 계산 중...");
+
+                // 3. 기본 확률 데이터 조회 (number_probability_status)
+                var numberStatistics = await GetNumberStatisticsAsync();
+                
+                // 4. 오래된 번호 데이터 조회 (number_frequency)
+                var oldNumbers = await GetOldNumbersAsync();
+                
+                // 5. 순위별 빈도 데이터 조회 (winner_rate_history)
+                var rankFrequency = await GetRankFrequencyAsync();
+
+                // 6. 가중치 적용한 확률 계산
+                var weightedProbabilities = CalculateWeightedProbabilities(numberStatistics, oldNumbers, rankFrequency);
+
+                // 7. 결과를 number_probability_new 테이블에 저장
+                var saved = await SaveWeightedProbabilitiesAsync(nextRound, weightedProbabilities);
+
+                if (saved)
+                {
+                    Console.WriteLine($"✅ {nextRound}회차 가중치 적용 확률 저장 완료!");
+                }
+
+                return saved;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ 가중치 적용 확률 계산 실패: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 특정 회차의 가중치 확률 데이터가 이미 존재하는지 확인
+        /// </summary>
+        public async Task<bool> IsWeightedProbabilityExistsAsync(int round)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                var query = "SELECT COUNT(*) FROM number_probability_new WHERE round = @round";
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@round", round);
+                
+                var count = Convert.ToInt32(await command.ExecuteScalarAsync());
+                return count > 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"가중치 확률 존재 확인 실패 - {round}회차: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// number_probability_status 테이블에서 숫자별 확률 조회 (number-statistics API 데이터)
+        /// </summary>
+        public async Task<Dictionary<int, double>> GetNumberStatisticsAsync()
+        {
+            var statistics = new Dictionary<int, double>();
+            
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                var query = "SELECT number, probability FROM number_probability_status ORDER BY probability DESC";
+                using var command = new MySqlCommand(query, connection);
+                using var reader = await command.ExecuteReaderAsync();
+                
+                while (await reader.ReadAsync())
+                {
+                    var number = reader.GetInt32("number");
+                    var probability = reader.GetDouble("probability");
+                    statistics[number] = probability;
+                }
+
+                Console.WriteLine($"📈 기본 확률 데이터 조회 완료: {statistics.Count}개 숫자");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"기본 확률 데이터 조회 실패: {ex.Message}");
+            }
+
+            return statistics;
+        }
+
+        /// <summary>
+        /// number_frequency 테이블에서 오래된 번호 데이터 조회 (old-numbers API 데이터)
+        /// </summary>
+        public async Task<Dictionary<int, int>> GetOldNumbersAsync()
+        {
+            var oldNumbers = new Dictionary<int, int>();
+            
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                var query = "SELECT number, frequency FROM number_frequency ORDER BY lastRound";
+                using var command = new MySqlCommand(query, connection);
+                using var reader = await command.ExecuteReaderAsync();
+                
+                while (await reader.ReadAsync())
+                {
+                    var number = reader.GetInt32("number");
+                    var frequency = reader.GetInt32("frequency");
+                    oldNumbers[number] = frequency;
+                }
+
+                Console.WriteLine($"📈 오래된 번호 데이터 조회 완료: {oldNumbers.Count}개 숫자");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"오래된 번호 데이터 조회 실패: {ex.Message}");
+            }
+
+            return oldNumbers;
+        }
+
+        /// <summary>
+        /// winner_rate_history 테이블에서 순위별 빈도 조회 (rank-frequency API 데이터)
+        /// </summary>
+        public async Task<Dictionary<int, int>> GetRankFrequencyAsync()
+        {
+            var rankFrequency = new Dictionary<int, int>();
+            
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                var query = @"
+                    SELECT rank, COUNT(rank) AS cnt 
+                    FROM winner_rate_history 
+                    WHERE round > 27 
+                    GROUP BY rank 
+                    ORDER BY cnt DESC";
+
+                using var command = new MySqlCommand(query, connection);
+                using var reader = await command.ExecuteReaderAsync();
+                
+                while (await reader.ReadAsync())
+                {
+                    var rank = reader.GetInt32("rank");
+                    var count = reader.GetInt32("cnt");
+                    rankFrequency[rank] = count;
+                }
+
+                Console.WriteLine($"📈 순위별 빈도 데이터 조회 완료: {rankFrequency.Count}개 순위");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"순위별 빈도 데이터 조회 실패: {ex.Message}");
+            }
+
+            return rankFrequency;
+        }
+
+        /// <summary>
+        /// 가중치를 적용한 확률 계산
+        /// </summary>
+        private Dictionary<int, double> CalculateWeightedProbabilities(
+            Dictionary<int, double> numberStatistics, 
+            Dictionary<int, int> oldNumbers, 
+            Dictionary<int, int> rankFrequency)
+        {
+            var weightedProbabilities = new Dictionary<int, double>();
+
+            // 기본 값 설정
+            const double BASE_FREQUENCY_WEIGHT = 1.0;
+            const double BASE_RANK_WEIGHT = 1.0;
+
+            try
+            {
+                // 먼저 현재 확률 기준으로 순위 매핑 생성 (기존 CalculateRankMapping 로직 사용)
+                var probabilityData = numberStatistics.ToDictionary(
+                    kvp => kvp.Key, 
+                    kvp => new NumberProbability { Probability = kvp.Value, Count = 0 }
+                );
+                var rankMapping = CalculateRankMapping(probabilityData);
+
+                // 각 숫자별로 가중치 적용
+                for (int number = 1; number <= 45; number++)
+                {
+                    // 1. 기본 확률 가져오기
+                    var baseProbability = numberStatistics.ContainsKey(number) ? numberStatistics[number] : 100.0 / 45;
+
+                    // 2. 빈도 가중치 계산 (오래 안 나온 번호일수록 가중치 증가)
+                    var frequency = oldNumbers.ContainsKey(number) ? oldNumbers[number] : 0;
+                    var frequencyWeight = BASE_FREQUENCY_WEIGHT + (frequency * 0.1); // 빈도가 1 증가할 때마다 0.1 가중치 추가
+
+                    // 3. 순위 가중치 계산 (해당 순위가 자주 당첨될수록 가중치 증가)
+                    var rank = rankMapping.ContainsKey(number) ? rankMapping[number] : 23; // 중간값으로 기본 설정
+                    var rankWeight = BASE_RANK_WEIGHT;
+                    if (rankFrequency.ContainsKey(rank))
+                    {
+                        // 해당 순위의 빈도가 높을수록 가중치 증가
+                        var rankCount = rankFrequency[rank];
+                        var maxRankCount = rankFrequency.Values.Max();
+                        rankWeight = BASE_RANK_WEIGHT + ((double)rankCount / maxRankCount) * 0.5; // 최대 0.5 추가 가중치
+                    }
+
+                    // 4. 최종 가중치 적용 확률 계산
+                    var weightedProbability = baseProbability * frequencyWeight * rankWeight;
+                    weightedProbabilities[number] = weightedProbability;
+                }
+
+                // 5. 정규화 (전체 합이 100%가 되도록)
+                var totalWeighted = weightedProbabilities.Values.Sum();
+                for (int number = 1; number <= 45; number++)
+                {
+                    weightedProbabilities[number] = (weightedProbabilities[number] / totalWeighted) * 100.0;
+                }
+
+                // 6. 계산 정보 출력
+                var avgWeighted = weightedProbabilities.Values.Average();
+                var maxWeighted = weightedProbabilities.Values.Max();
+                var minWeighted = weightedProbabilities.Values.Min();
+
+                Console.WriteLine($"📊 가중치 적용 확률 계산 완료:");
+                Console.WriteLine($"   - 평균 확률: {avgWeighted:F2}% (이론값: {100.0/45:F2}%)");
+                Console.WriteLine($"   - 최고 확률: {maxWeighted:F2}%");
+                Console.WriteLine($"   - 최저 확률: {minWeighted:F2}%");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ 가중치 확률 계산 중 오류: {ex.Message}");
+            }
+
+            return weightedProbabilities;
+        }
+
+        /// <summary>
+        /// number_probability_new 테이블에 가중치 적용 확률 저장
+        /// </summary>
+        public async Task<bool> SaveWeightedProbabilitiesAsync(int round, Dictionary<int, double> weightedProbabilities)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                using var transaction = await connection.BeginTransactionAsync();
+                try
+                {
+                    // 해당 회차의 기존 데이터 삭제 (있다면)
+                    var deleteQuery = "DELETE FROM number_probability_new WHERE round = @round";
+                    using var deleteCommand = new MySqlCommand(deleteQuery, connection, transaction);
+                    deleteCommand.Parameters.AddWithValue("@round", round);
+                    var deletedRows = await deleteCommand.ExecuteNonQueryAsync();
+                    
+                    if (deletedRows > 0)
+                    {
+                        Console.WriteLine($"🗑️ {round}회차 기존 가중치 확률 데이터 삭제: {deletedRows}행");
+                    }
+
+                    // 새로운 데이터 INSERT
+                    var insertQuery = @"
+                        INSERT INTO number_probability_new (number, probability, round) 
+                        VALUES (@number, @probability, @round)";
+
+                    int insertedCount = 0;
+                    foreach (var kvp in weightedProbabilities)
+                    {
+                        using var insertCommand = new MySqlCommand(insertQuery, connection, transaction);
+                        insertCommand.Parameters.AddWithValue("@number", kvp.Key);
+                        insertCommand.Parameters.AddWithValue("@probability", kvp.Value);
+                        insertCommand.Parameters.AddWithValue("@round", round);
+                        
+                        await insertCommand.ExecuteNonQueryAsync();
+                        insertedCount++;
+                    }
+
+                    await transaction.CommitAsync();
+                    Console.WriteLine($"✅ {round}회차 가중치 적용 확률 저장 완료: {insertedCount}행");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync();
+                    Console.WriteLine($"❌ {round}회차 가중치 확률 저장 트랜잭션 롤백: {ex.Message}");
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ {round}회차 가중치 확률 저장 실패: {ex.Message}");
+                return false;
+            }
+        }
     }
 
     /// <summary>
