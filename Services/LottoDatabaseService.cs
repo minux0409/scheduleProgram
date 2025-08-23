@@ -63,7 +63,7 @@ namespace scheduleProgram.Services
         /// <summary>
         /// 당첨 번호 저장
         /// </summary>
-        public async Task<bool> SaveWinnerNumbersAsync(int round, List<WinnerNumber> numbers, DateTime roundDate)
+        public async Task<bool> SaveWinnerNumbersAsync(int round, List<WinnerNumber> numbers, DateTime roundDate, long totalPrice = 0, int winner = 0, long winnerPrice = 0)
         {
             try
             {
@@ -74,8 +74,8 @@ namespace scheduleProgram.Services
                 try
                 {
                     var query = @"
-                        INSERT INTO winner_history (round, seq, number, bonusFlag, roundDate, inDate) 
-                        VALUES (@round, @seq, @number, @bonusFlag, @roundDate, NOW())";
+                        INSERT INTO winner_history (round, seq, number, bonusFlag, roundDate, totalPrice, winner, winnerPrice, inDate) 
+                        VALUES (@round, @seq, @number, @bonusFlag, @roundDate, @totalPrice, @winner, @winnerPrice, NOW())";
 
                     // 모든 번호 저장 (일반 번호 6개 + 보너스 번호 1개)
                     foreach (var number in numbers)
@@ -86,6 +86,9 @@ namespace scheduleProgram.Services
                         command.Parameters.AddWithValue("@number", number.Number);
                         command.Parameters.AddWithValue("@bonusFlag", number.IsBonusNumber ? "Y" : "N"); // Y/N으로 변경
                         command.Parameters.AddWithValue("@roundDate", roundDate.ToString("yyyy-MM-dd"));
+                        command.Parameters.AddWithValue("@totalPrice", totalPrice);
+                        command.Parameters.AddWithValue("@winner", winner);
+                        command.Parameters.AddWithValue("@winnerPrice", winnerPrice);
                         
                         await command.ExecuteNonQueryAsync();
                     }
@@ -95,9 +98,10 @@ namespace scheduleProgram.Services
                     var normalCount = numbers.Count(n => !n.IsBonusNumber);
                     var bonusCount = numbers.Count(n => n.IsBonusNumber);
                     Console.WriteLine($"로또 {round}회차 당첨번호 저장 완료 (일반: {normalCount}개, 보너스: {bonusCount}개, 추첨일: {roundDate:yyyy-MM-dd})");
+                    Console.WriteLine($"   상금정보 - 총상금: {totalPrice:N0}원, 1등 당첨자: {winner}명, 1등 당첨금: {winnerPrice:N0}원");
                     return true;
                 }
-                catch
+                catch (Exception ex)
                 {
                     await transaction.RollbackAsync();
                     throw;
@@ -935,7 +939,7 @@ namespace scheduleProgram.Services
                     return true;
                 }
 
-                Console.WriteLine($"📊 {nextRound}회차 가중치 확률 계산 중...");
+                Console.WriteLine($"📊 {nextRound}회차 가중치 확률 생성 중...");
 
                 // 3. 기본 확률 데이터 조회 (number_probability_status)
                 var numberStatistics = await GetNumberStatisticsAsync();

@@ -88,7 +88,7 @@ namespace scheduleProgram.ProgramList.Lotto
                     }
 
                     // DB에 저장
-                    var saved = await _dbService.SaveWinnerNumbersAsync(currentRound, lottoResult.Numbers, lottoResult.DrawDate);
+                    var saved = await _dbService.SaveWinnerNumbersAsync(currentRound, lottoResult.Numbers, lottoResult.DrawDate, lottoResult.TotalPrice, lottoResult.Winner, lottoResult.WinnerPrice);
                     if (saved)
                     {
                         processedCount++;

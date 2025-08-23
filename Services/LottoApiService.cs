@@ -106,6 +106,9 @@ namespace scheduleProgram.Services
                     Round = lottoData.drwNo,
                     DrawDate = DateTime.ParseExact(lottoData.drwNoDate, "yyyy-MM-dd", null),
                     IsDataNotFound = false,
+                    TotalPrice = lottoData.firstAccumamnt,
+                    Winner = lottoData.firstPrzwnerCo,
+                    WinnerPrice = lottoData.firstWinamnt,
                     Numbers = new List<WinnerNumber>
                     {
                         new WinnerNumber { Seq = 1, Number = lottoData.drwtNo1, IsBonusNumber = false },
@@ -160,6 +163,9 @@ namespace scheduleProgram.Services
         public int Round { get; set; }
         public DateTime DrawDate { get; set; }
         public bool IsDataNotFound { get; set; } = false; // API에서 데이터가 없음을 나타냄 (returnValue: "fail")
+        public long TotalPrice { get; set; } // 총 상금 (firstAccumamnt)
+        public int Winner { get; set; } // 1등 당첨자 수 (firstPrzwnerCo)
+        public long WinnerPrice { get; set; } // 1등 당첨금 (firstWinamnt)
         public List<WinnerNumber> Numbers { get; set; } = new List<WinnerNumber>();
     }
 }
