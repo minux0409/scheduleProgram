@@ -621,7 +621,7 @@ namespace scheduleProgram.Services
         }
 
         /// <summary>
-        /// 특정 회차에 대한 추천번호 확률을 계산하고 저장합니다
+        /// 특정 회차에 대한 추천번호 확률을 계산하고 저장합니다 (number_probability_new 기반)
         /// </summary>
         public async Task<bool> CalculateAndSaveRecommendNumbersAsync(int targetRound)
         {
@@ -629,48 +629,48 @@ namespace scheduleProgram.Services
             {
                 Console.WriteLine($"🎯 {targetRound}회차 추천번호 확률 계산 시작...");
 
-                // 1. 해당 회차 이전의 당첨 횟수 조회
-                var numberCounts = await GetNumberCountsBeforeRoundAsync(targetRound);
+                // 1. number_probability_new에서 해당 회차 데이터 조회
+                var weightedProbabilities = await GetWeightedProbabilitiesFromNewTableAsync(targetRound);
                 
-                // 2. 해당 회차 이전의 총 회차 수 조회
-                var totalRounds = await GetTotalRoundsBeforeAsync(targetRound);
-                
-                if (totalRounds == 0)
+                if (weightedProbabilities.Count == 0)
                 {
-                    Console.WriteLine($"⚠️ {targetRound}회차 이전에 회차 데이터가 없어 추천번호 계산을 건너뜁니다.");
+                    Console.WriteLine($"⚠️ {targetRound}회차 가중치 확률 데이터가 없어 추천번호 계산을 건너뜁니다.");
                     return false;
                 }
 
-                Console.WriteLine($"📈 {targetRound}회차 이전 총 회차: {totalRounds}개");
+                Console.WriteLine($"📈 {targetRound}회차 가중치 확률 데이터 조회 완료: {weightedProbabilities.Count}개 숫자");
 
-                // 3. 해당 회차 이전 데이터로 확률 계산
-                var probabilityData = CalculateProbabilities(numberCounts, totalRounds);
+                // 2. 확률 기준으로 순위 계산 (높은 확률이 낮은 순위)
+                var rankMapping = CalculateRankMappingFromProbabilities(weightedProbabilities);
 
-                // 4. 동일 확률 고려한 순위 계산
-                var rankMapping = CalculateRankMapping(probabilityData);
-
-                // 5. 모든 숫자(1~45)의 확률과 순위 데이터 생성
+                // 3. 추천번호 데이터 생성 (확률 순위 기준)
                 var recommendData = new List<RecommendNumberProbability>();
-                for (int number = 1; number <= 45; number++)
+                foreach (var kvp in weightedProbabilities)
                 {
-                    if (probabilityData.ContainsKey(number))
+                    var number = kvp.Key;
+                    var probability = kvp.Value;
+                    var rank = rankMapping[number];
+
+                    recommendData.Add(new RecommendNumberProbability
                     {
-                        recommendData.Add(new RecommendNumberProbability
-                        {
-                            Number = number,
-                            Probability = probabilityData[number].Probability,
-                            Rank = rankMapping[number]
-                        });
-                    }
+                        Number = number,
+                        Probability = probability,
+                        Rank = rank
+                    });
                 }
 
-                // 6. DB에 저장
+                // 4. 순위 순으로 정렬
+                recommendData = recommendData.OrderBy(x => x.Rank).ThenBy(x => x.Number).ToList();
+
+                // 5. DB에 저장
                 var saved = await SaveRecommendNumbersAsync(targetRound, recommendData);
 
                 if (saved)
                 {
                     var avgProbability = recommendData.Average(x => x.Probability);
+                    var topNumbers = recommendData.Take(6).Select(x => x.Number).ToArray();
                     Console.WriteLine($"   전체 평균 확률: {avgProbability:F2}% (이론값: {100.0/45:F2}%)");
+                    Console.WriteLine($"   추천 상위 6개 번호: {string.Join(", ", topNumbers)}");
                     Console.WriteLine($"   총 {recommendData.Count}개 숫자의 확률 및 순위 저장 완료");
                 }
 
@@ -681,6 +681,76 @@ namespace scheduleProgram.Services
                 Console.WriteLine($"❌ {targetRound}회차 추천번호 확률 계산 실패: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// number_probability_new 테이블에서 특정 회차의 가중치 확률 데이터 조회
+        /// </summary>
+        private async Task<Dictionary<int, double>> GetWeightedProbabilitiesFromNewTableAsync(int round)
+        {
+            var probabilities = new Dictionary<int, double>();
+            
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                var query = @"
+                    SELECT number, probability 
+                    FROM number_probability_new 
+                    WHERE round = @round 
+                    ORDER BY probability DESC";
+
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@round", round);
+                using var reader = await command.ExecuteReaderAsync();
+                
+                while (await reader.ReadAsync())
+                {
+                    var number = reader.GetInt32("number");
+                    var probability = reader.GetDouble("probability");
+                    probabilities[number] = probability;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"가중치 확률 데이터 조회 실패 - {round}회차: {ex.Message}");
+            }
+
+            return probabilities;
+        }
+
+        /// <summary>
+        /// 확률 기준으로 순위 매핑을 생성합니다 (동일 확률 처리 포함)
+        /// </summary>
+        private Dictionary<int, int> CalculateRankMappingFromProbabilities(Dictionary<int, double> probabilities)
+        {
+            // 확률 기준으로 내림차순 정렬 (높은 확률이 먼저)
+            var sortedByProbability = probabilities
+                .OrderByDescending(x => x.Value)
+                .ThenBy(x => x.Key) // 동일 확률일 때는 번호 순으로 정렬
+                .ToList();
+
+            var rankMapping = new Dictionary<int, int>();
+            int currentRank = 1;
+            double? previousProbability = null;
+            
+            for (int i = 0; i < sortedByProbability.Count; i++)
+            {
+                var item = sortedByProbability[i];
+                var currentProbability = Math.Round(item.Value, 10); // 소수점 오차 보정
+                
+                // 이전 확률과 다르면 순위 업데이트
+                if (previousProbability.HasValue && Math.Abs(currentProbability - previousProbability.Value) > 1e-10)
+                {
+                    currentRank = i + 1; // 현재 인덱스 + 1이 새로운 순위
+                }
+                
+                rankMapping[item.Key] = currentRank;
+                previousProbability = currentProbability;
+            }
+
+            return rankMapping;
         }
 
         /// <summary>
@@ -739,181 +809,6 @@ namespace scheduleProgram.Services
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ {round}회차 추천번호 저장 실패: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// 확률 기준으로 동일 순위를 고려한 순위 매핑을 생성합니다
-        /// </summary>
-        private Dictionary<int, int> CalculateRankMapping(Dictionary<int, NumberProbability> probabilityData)
-        {
-            // 확률 기준으로 내림차순 정렬 (높은 확률이 먼저)
-            var sortedByProbability = probabilityData
-                .OrderByDescending(x => x.Value.Probability)
-                .ThenBy(x => x.Key) // 동일 확률일 때는 번호 순으로 정렬
-                .ToList();
-
-            var rankMapping = new Dictionary<int, int>();
-            int currentRank = 1;
-            double? previousProbability = null;
-            
-            for (int i = 0; i < sortedByProbability.Count; i++)
-            {
-                var item = sortedByProbability[i];
-                var currentProbability = Math.Round(item.Value.Probability, 10); // 소수점 오차 보정
-                
-                // 이전 확률과 다르면 순위 업데이트
-                if (previousProbability.HasValue && Math.Abs(currentProbability - previousProbability.Value) > 1e-10)
-                {
-                    currentRank = i + 1; // 현재 인덱스 + 1이 새로운 순위
-                }
-                
-                rankMapping[item.Key] = currentRank;
-                previousProbability = currentProbability;
-            }
-
-            return rankMapping;
-        }
-
-        /// <summary>
-        /// 각 번호별로 마지막 등장 회차와 간격을 계산하고 저장합니다
-        /// </summary>
-        public async Task<bool> CalculateAndSaveNumberFrequencyAsync()
-        {
-            try
-            {
-                Console.WriteLine("📊 번호별 마지막 등장 간격 계산 시작...");
-
-                // 1. 전체 최신 회차 조회
-                var latestRound = await GetLatestRoundAsync();
-                if (latestRound == 0)
-                {
-                    Console.WriteLine("⚠️ 회차 데이터가 없어 간격 계산을 건너뜁니다.");
-                    return false;
-                }
-
-                Console.WriteLine($"📈 최신 회차: {latestRound}");
-
-                // 2. 각 번호별 마지막 등장 회차 조회
-                var numberFrequencies = await GetNumberLastRoundsAsync();
-
-                // 3. 간격 계산 (최신 회차 - 마지막 등장 회차)
-                foreach (var frequency in numberFrequencies)
-                {
-                    frequency.Frequency = latestRound - frequency.LastRound;
-                }
-
-                // 4. DB에 저장
-                var saved = await SaveNumberFrequencyAsync(numberFrequencies);
-
-                if (saved)
-                {
-                    Console.WriteLine($"✅ 총 {numberFrequencies.Count}개 번호의 등장 간격 저장 완료");
-                }
-
-                return saved;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ 번호별 등장 간격 계산 실패: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// 각 번호별 마지막 등장 회차를 조회합니다
-        /// </summary>
-        private async Task<List<NumberFrequency>> GetNumberLastRoundsAsync()
-        {
-            var frequencies = new List<NumberFrequency>();
-
-            try
-            {
-                using var connection = new MySqlConnection(_connectionString);
-                await connection.OpenAsync();
-
-                // 1~45까지 각 번호별로 마지막 등장 회차 조회
-                for (int number = 1; number <= 45; number++)
-                {
-                    var query = @"
-                        SELECT MAX(round) as lastRound 
-                        FROM winner_history 
-                        WHERE number = @number AND bonusFlag = 'N'";
-
-                    using var command = new MySqlCommand(query, connection);
-                    command.Parameters.AddWithValue("@number", number);
-                    
-                    var result = await command.ExecuteScalarAsync();
-                    var lastRound = result == DBNull.Value ? 0 : Convert.ToInt32(result);
-
-                    frequencies.Add(new NumberFrequency
-                    {
-                        Number = number,
-                        LastRound = lastRound,
-                        Frequency = 0 // 나중에 계산됨
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"번호별 마지막 등장 회차 조회 실패: {ex.Message}");
-            }
-
-            return frequencies;
-        }
-
-        /// <summary>
-        /// number_frequency 테이블에 번호별 등장 간격을 저장합니다
-        /// </summary>
-        public async Task<bool> SaveNumberFrequencyAsync(List<NumberFrequency> frequencies)
-        {
-            try
-            {
-                using var connection = new MySqlConnection(_connectionString);
-                await connection.OpenAsync();
-
-                using var transaction = await connection.BeginTransactionAsync();
-                try
-                {
-                    // 1단계: 기존 데이터 전체 삭제
-                    var deleteQuery = "DELETE FROM number_frequency";
-                    using var deleteCommand = new MySqlCommand(deleteQuery, connection, transaction);
-                    var deletedRows = await deleteCommand.ExecuteNonQueryAsync();
-                    Console.WriteLine($"🗑️ 기존 번호 간격 데이터 삭제: {deletedRows}행");
-
-                    // 2단계: 새로운 데이터 INSERT
-                    var insertQuery = @"
-                        INSERT INTO number_frequency (number, lastRound, frequency, inDate) 
-                        VALUES (@number, @lastRound, @frequency, NOW())";
-
-                    int insertedCount = 0;
-                    foreach (var frequency in frequencies)
-                    {
-                        using var insertCommand = new MySqlCommand(insertQuery, connection, transaction);
-                        insertCommand.Parameters.AddWithValue("@number", frequency.Number);
-                        insertCommand.Parameters.AddWithValue("@lastRound", frequency.LastRound);
-                        insertCommand.Parameters.AddWithValue("@frequency", frequency.Frequency);
-                        
-                        await insertCommand.ExecuteNonQueryAsync();
-                        insertedCount++;
-                    }
-
-                    await transaction.CommitAsync();
-                    Console.WriteLine($"✅ 새로운 번호 간격 데이터 저장 완료: {insertedCount}행");
-                    Console.WriteLine($"📊 번호 간격 데이터 업데이트 완료 - 삭제: {deletedRows}행, 추가: {insertedCount}행");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    await transaction.RollbackAsync();
-                    Console.WriteLine($"❌ 번호 간격 저장 트랜잭션 롤백: {ex.Message}");
-                    throw;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ 번호 간격 데이터 저장 실패: {ex.Message}");
                 return false;
             }
         }
@@ -1072,11 +967,12 @@ namespace scheduleProgram.Services
                 using var connection = new MySqlConnection(_connectionString);
                 await connection.OpenAsync();
 
+                // 27회차 이후 데이터만 포함
                 var query = @"
-                    SELECT rank, COUNT(rank) AS cnt 
+                    SELECT `rank`, COUNT(`rank`) AS cnt 
                     FROM winner_rate_history 
                     WHERE round > 27 
-                    GROUP BY rank 
+                    GROUP BY `rank` 
                     ORDER BY cnt DESC";
 
                 using var command = new MySqlCommand(query, connection);
@@ -1126,21 +1022,20 @@ namespace scheduleProgram.Services
                 for (int number = 1; number <= 45; number++)
                 {
                     // 1. 기본 확률 가져오기
-                    var baseProbability = numberStatistics.ContainsKey(number) ? numberStatistics[number] : 100.0 / 45;
+                    var baseProbability = numberStatistics[number];
 
                     // 2. 빈도 가중치 계산 (오래 안 나온 번호일수록 가중치 증가)
                     var frequency = oldNumbers.ContainsKey(number) ? oldNumbers[number] : 0;
-                    var frequencyWeight = BASE_FREQUENCY_WEIGHT + (frequency * 0.1); // 빈도가 1 증가할 때마다 0.1 가중치 추가
+                    var frequencyWeight = BASE_FREQUENCY_WEIGHT + (frequency * 0.1);
 
                     // 3. 순위 가중치 계산 (해당 순위가 자주 당첨될수록 가중치 증가)
-                    var rank = rankMapping.ContainsKey(number) ? rankMapping[number] : 23; // 중간값으로 기본 설정
+                    var rank = rankMapping.ContainsKey(number) ? rankMapping[number] : 23;
                     var rankWeight = BASE_RANK_WEIGHT;
-                    if (rankFrequency.ContainsKey(rank))
+                    if (rankFrequency.ContainsKey(rank) && rankFrequency.Values.Count > 0)
                     {
-                        // 해당 순위의 빈도가 높을수록 가중치 증가
                         var rankCount = rankFrequency[rank];
                         var maxRankCount = rankFrequency.Values.Max();
-                        rankWeight = BASE_RANK_WEIGHT + ((double)rankCount / maxRankCount) * 0.5; // 최대 0.5 추가 가중치
+                        rankWeight = BASE_RANK_WEIGHT + ((double)rankCount / maxRankCount) * 0.5;
                     }
 
                     // 4. 최종 가중치 적용 확률 계산
@@ -1150,20 +1045,18 @@ namespace scheduleProgram.Services
 
                 // 5. 정규화 (전체 합이 100%가 되도록)
                 var totalWeighted = weightedProbabilities.Values.Sum();
-                for (int number = 1; number <= 45; number++)
+                if (totalWeighted > 0)
                 {
-                    weightedProbabilities[number] = (weightedProbabilities[number] / totalWeighted) * 100.0;
+                    for (int number = 1; number <= 45; number++)
+                    {
+                        weightedProbabilities[number] = (weightedProbabilities[number] / totalWeighted) * 100.0;
+                    }
                 }
 
-                // 6. 계산 정보 출력
-                var avgWeighted = weightedProbabilities.Values.Average();
-                var maxWeighted = weightedProbabilities.Values.Max();
-                var minWeighted = weightedProbabilities.Values.Min();
-
                 Console.WriteLine($"📊 가중치 적용 확률 계산 완료:");
-                Console.WriteLine($"   - 평균 확률: {avgWeighted:F2}% (이론값: {100.0/45:F2}%)");
-                Console.WriteLine($"   - 최고 확률: {maxWeighted:F2}%");
-                Console.WriteLine($"   - 최저 확률: {minWeighted:F2}%");
+                Console.WriteLine($"   - 평균 확률: {weightedProbabilities.Values.Average():F2}% (이론값: {100.0/45:F2}%)");
+                Console.WriteLine($"   - 최고 확률: {weightedProbabilities.Values.Max():F2}%");
+                Console.WriteLine($"   - 최저 확률: {weightedProbabilities.Values.Min():F2}%");
             }
             catch (Exception ex)
             {
@@ -1199,8 +1092,8 @@ namespace scheduleProgram.Services
 
                     // 새로운 데이터 INSERT
                     var insertQuery = @"
-                        INSERT INTO number_probability_new (number, probability, round) 
-                        VALUES (@number, @probability, @round)";
+                        INSERT INTO number_probability_new (number, probability, round,inDate) 
+                        VALUES (@number, @probability, @round,now())";
 
                     int insertedCount = 0;
                     foreach (var kvp in weightedProbabilities)
@@ -1230,6 +1123,383 @@ namespace scheduleProgram.Services
                 Console.WriteLine($"❌ {round}회차 가중치 확률 저장 실패: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// 각 번호별로 마지막 등장 회차와 간격을 계산하고 저장합니다
+        /// </summary>
+        public async Task<bool> CalculateAndSaveNumberFrequencyAsync()
+        {
+            try
+            {
+                Console.WriteLine("📊 번호별 마지막 등장 간격 계산 시작...");
+
+                // 1. 전체 최신 회차 조회
+                var latestRound = await GetLatestRoundAsync();
+                if (latestRound == 0)
+                {
+                    Console.WriteLine("⚠️ 회차 데이터가 없어 간격 계산을 건너뜁니다.");
+                    return false;
+                }
+
+                Console.WriteLine($"📈 최신 회차: {latestRound}");
+
+                // 2. 각 번호별 마지막 등장 회차 조회
+                var numberFrequencies = await GetNumberLastRoundsAsync();
+
+                // 3. 간격 계산 (최신 회차 - 마지막 등장 회차)
+                foreach (var frequency in numberFrequencies)
+                {
+                    frequency.Frequency = latestRound - frequency.LastRound;
+                }
+
+                // 4. DB에 저장
+                var saved = await SaveNumberFrequencyAsync(numberFrequencies);
+
+                if (saved)
+                {
+                    Console.WriteLine($"✅ 총 {numberFrequencies.Count}개 번호의 등장 간격 저장 완료");
+                }
+
+                return saved;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ 번호별 등장 간격 계산 실패: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 각 번호별 마지막 등장 회차를 조회합니다
+        /// </summary>
+        private async Task<List<NumberFrequency>> GetNumberLastRoundsAsync()
+        {
+            var frequencies = new List<NumberFrequency>();
+
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                // 1~45까지 각 번호별로 마지막 등장 회차 조회
+                for (int number = 1; number <= 45; number++)
+                {
+                    var query = @"
+                        SELECT MAX(round) as lastRound 
+                        FROM winner_history 
+                        WHERE number = @number AND bonusFlag = 'N'";
+
+                    using var command = new MySqlCommand(query, connection);
+                    command.Parameters.AddWithValue("@number", number);
+                    
+                    var result = await command.ExecuteScalarAsync();
+                    var lastRound = result == DBNull.Value ? 0 : Convert.ToInt32(result);
+
+                    frequencies.Add(new NumberFrequency
+                    {
+                        Number = number,
+                        LastRound = lastRound,
+                        Frequency = 0 // 나중에 계산됨
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"번호별 마지막 등장 회차 조회 실패: {ex.Message}");
+            }
+
+            return frequencies;
+        }
+
+        /// <summary>
+        /// number_frequency 테이블에 번호별 등장 간격을 저장합니다
+        /// </summary>
+        public async Task<bool> SaveNumberFrequencyAsync(List<NumberFrequency> frequencies)
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                using var transaction = await connection.BeginTransactionAsync();
+                try
+                {
+                    // 1단계: 기존 데이터 전체 삭제
+                    var deleteQuery = "DELETE FROM number_frequency";
+                    using var deleteCommand = new MySqlCommand(deleteQuery, connection, transaction);
+                    var deletedRows = await deleteCommand.ExecuteNonQueryAsync();
+                    Console.WriteLine($"🗑️ 기존 번호 간격 데이터 삭제: {deletedRows}행");
+
+                    // 2단계: 새로운 데이터 INSERT
+                    var insertQuery = @"
+                        INSERT INTO number_frequency (number, lastRound, frequency, inDate) 
+                        VALUES (@number, @lastRound, @frequency, NOW())";
+
+                    int insertedCount = 0;
+                    foreach (var frequency in frequencies)
+                    {
+                        using var insertCommand = new MySqlCommand(insertQuery, connection, transaction);
+                        insertCommand.Parameters.AddWithValue("@number", frequency.Number);
+                        insertCommand.Parameters.AddWithValue("@lastRound", frequency.LastRound);
+                        insertCommand.Parameters.AddWithValue("@frequency", frequency.Frequency);
+                        
+                        await insertCommand.ExecuteNonQueryAsync();
+                        insertedCount++;
+                    }
+
+                    await transaction.CommitAsync();
+                    Console.WriteLine($"✅ 새로운 번호 간격 데이터 저장 완료: {insertedCount}행");
+                    Console.WriteLine($"📊 번호 간격 데이터 업데이트 완료 - 삭제: {deletedRows}행, 추가: {insertedCount}행");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync();
+                    Console.WriteLine($"❌ 번호 간격 저장 트랜잭션 롤백: {ex.Message}");
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ 번호 간격 데이터 저장 실패: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 확률 기준으로 동일 순위를 고려한 순위 매핑을 생성합니다
+        /// </summary>
+        private Dictionary<int, int> CalculateRankMapping(Dictionary<int, NumberProbability> probabilityData)
+        {
+            // 확률 기준으로 내림차순 정렬 (높은 확률이 먼저)
+            var sortedByProbability = probabilityData
+                .OrderByDescending(x => x.Value.Probability)
+                .ThenBy(x => x.Key) // 동일 확률일 때는 번호 순으로 정렬
+                .ToList();
+
+            var rankMapping = new Dictionary<int, int>();
+            int currentRank = 1;
+            double? previousProbability = null;
+            
+            for (int i = 0; i < sortedByProbability.Count; i++)
+            {
+                var item = sortedByProbability[i];
+                var currentProbability = Math.Round(item.Value.Probability, 10); // 소수점 오차 보정
+                
+                // 이전 확률과 다르면 순위 업데이트
+                if (previousProbability.HasValue && Math.Abs(currentProbability - previousProbability.Value) > 1e-10)
+                {
+                    currentRank = i + 1; // 현재 인덱스 + 1이 새로운 순위
+                }
+                
+                rankMapping[item.Key] = currentRank;
+                previousProbability = currentProbability;
+            }
+
+            return rankMapping;
+        }
+
+        /// <summary>
+        /// 특정 회차까지의 번호별 등장 간격을 계산합니다 (27회차부터 계산 회차까지)
+        /// </summary>
+        public async Task<Dictionary<int, int>> GetNumberFrequencyUntilRoundAsync(int targetRound)
+        {
+            var oldNumbers = new Dictionary<int, int>();
+            
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                // 1~45까지 모든 숫자를 초기화
+                for (int i = 1; i <= 45; i++)
+                {
+                    oldNumbers[i] = 0;
+                }
+
+                // 27회차부터 targetRound까지의 범위에서 각 번호별 마지막 등장 회차 조회
+                for (int number = 1; number <= 45; number++)
+                {
+                    var query = @"
+                        SELECT MAX(round) as lastRound 
+                        FROM winner_history 
+                        WHERE number = @number AND bonusFlag = 'N' AND round >= 27 AND round < @targetRound";
+
+                    using var command = new MySqlCommand(query, connection);
+                    command.Parameters.AddWithValue("@number", number);
+                    command.Parameters.AddWithValue("@targetRound", targetRound);
+                    
+                    var result = await command.ExecuteScalarAsync();
+                    var lastRound = result == DBNull.Value ? 0 : Convert.ToInt32(result);
+                    
+                    // 해당 번호가 targetRound로부터 몇 라운드 전에 당첨되었는지 계산
+                    oldNumbers[number] = lastRound > 0 ? targetRound - lastRound : targetRound - 27 + 1;
+                }
+
+                Console.WriteLine($"📈 {targetRound}회차 기준 번호별 등장 간격 계산 완료: {oldNumbers.Count}개 숫자");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"번호별 등장 간격 계산 실패 - {targetRound}회차: {ex.Message}");
+            }
+
+            return oldNumbers;
+        }
+
+        /// <summary>
+        /// recommand_history에서 특정 회차의 데이터 조회
+        /// </summary>
+        public async Task<Dictionary<int, double>> GetRecommendHistoryAsync(int round)
+        {
+            var recommendations = new Dictionary<int, double>();
+            
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                var query = @"
+                    SELECT number, probability 
+                    FROM recommand_history 
+                    WHERE round = @round 
+                    ORDER BY probability DESC";
+
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@round", round);
+                using var reader = await command.ExecuteReaderAsync();
+                
+                while (await reader.ReadAsync())
+                {
+                    var number = reader.GetInt32("number");
+                    var probability = reader.GetDouble("probability");
+                    recommendations[number] = probability;
+                }
+
+                Console.WriteLine($"📈 {round}회차 추천 이력 데이터 조회 완료: {recommendations.Count}개 숫자");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"추천 이력 데이터 조회 실패 - {round}회차: {ex.Message}");
+            }
+
+            return recommendations;
+        }
+
+        /// <summary>
+        /// winner_rate_history에서 특정 회차까지의 순위별 빈도 데이터 조회 (27회차부터 해당 회차까지)
+        /// </summary>
+        public async Task<Dictionary<int, int>> GetRankFrequencyForRoundAsync(int round)
+        {
+            var rankFrequency = new Dictionary<int, int>();
+            
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                await connection.OpenAsync();
+
+                // 27회차부터 해당 회차 이전까지의 순위별 빈도 조회
+                var query = @"
+                    SELECT `rank`, COUNT(`rank`) AS cnt 
+                    FROM winner_rate_history 
+                    WHERE round >= 27 AND round < @round 
+                    GROUP BY `rank` 
+                    ORDER BY cnt DESC";
+
+                using var command = new MySqlCommand(query, connection);
+                command.Parameters.AddWithValue("@round", round);
+                using var reader = await command.ExecuteReaderAsync();
+                
+                while (await reader.ReadAsync())
+                {
+                    var rank = reader.GetInt32("rank");
+                    var count = reader.GetInt32("cnt");
+                    rankFrequency[rank] = count;
+                }
+
+                Console.WriteLine($"📈 27회차부터 {round}회차 이전까지 순위별 빈도 데이터 조회 완료: {rankFrequency.Count}개 순위");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"순위별 빈도 데이터 조회 실패 - {round}회차: {ex.Message}");
+            }
+
+            return rankFrequency;
+        }
+
+        /// <summary>
+        /// 과거 데이터 기반으로 가중치 확률을 계산합니다 (추천번호 이력 재생성용)
+        /// </summary>
+        public Dictionary<int, double> CalculateWeightedProbabilitiesForHistoricalData(
+            Dictionary<int, double> recommendHistory,
+            Dictionary<int, int> oldNumbers, 
+            Dictionary<int, int> rankFrequency)
+        {
+            var weightedProbabilities = new Dictionary<int, double>();
+
+            // 기본 값 설정
+            const double BASE_FREQUENCY_WEIGHT = 1.0;
+            const double BASE_RANK_WEIGHT = 1.0;
+
+            try
+            {
+                // 추천 이력 데이터가 있으면 기본 확률로 사용, 없으면 균등 확률
+                var numberStatistics = new Dictionary<int, double>();
+                for (int i = 1; i <= 45; i++)
+                {
+                    numberStatistics[i] = recommendHistory.ContainsKey(i) ? recommendHistory[i] : 100.0 / 45;
+                }
+
+                // 현재 확률 기준으로 순위 매핑 생성
+                var probabilityData = numberStatistics.ToDictionary(
+                    kvp => kvp.Key, 
+                    kvp => new NumberProbability { Probability = kvp.Value, Count = 0 }
+                );
+                var rankMapping = CalculateRankMapping(probabilityData);
+
+                // 각 숫자별로 가중치 적용
+                for (int number = 1; number <= 45; number++)
+                {
+                    // 1. 기본 확률 가져오기
+                    var baseProbability = numberStatistics[number];
+
+                    // 2. 빈도 가중치 계산 (오래 안 나온 번호일수록 가중치 증가)
+                    var frequency = oldNumbers.ContainsKey(number) ? oldNumbers[number] : 0;
+                    var frequencyWeight = BASE_FREQUENCY_WEIGHT + (frequency * 0.1);
+
+                    // 3. 순위 가중치 계산 (해당 순위가 자주 당첨될수록 가중치 증가)
+                    var rank = rankMapping.ContainsKey(number) ? rankMapping[number] : 23;
+                    var rankWeight = BASE_RANK_WEIGHT;
+                    if (rankFrequency.ContainsKey(rank) && rankFrequency.Values.Count > 0)
+                    {
+                        var rankCount = rankFrequency[rank];
+                        var maxRankCount = rankFrequency.Values.Max();
+                        rankWeight = BASE_RANK_WEIGHT + ((double)rankCount / maxRankCount) * 0.5;
+                    }
+
+                    // 4. 최종 가중치 적용 확률 계산
+                    var weightedProbability = baseProbability * frequencyWeight * rankWeight;
+                    weightedProbabilities[number] = weightedProbability;
+                }
+
+                // 5. 정규화 (전체 합이 100%가 되도록)
+                var totalWeighted = weightedProbabilities.Values.Sum();
+                if (totalWeighted > 0)
+                {
+                    for (int number = 1; number <= 45; number++)
+                    {
+                        weightedProbabilities[number] = (weightedProbabilities[number] / totalWeighted) * 100.0;
+                    }
+                }
+
+                Console.WriteLine($"📊 과거 데이터 기반 가중치 적용 확률 계산 완료");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ 과거 데이터 기반 가중치 확률 계산 중 오류: {ex.Message}");
+            }
+
+            return weightedProbabilities;
         }
     }
 

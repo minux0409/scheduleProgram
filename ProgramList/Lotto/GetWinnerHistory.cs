@@ -87,7 +87,7 @@ namespace scheduleProgram.ProgramList.Lotto
                         break; // 데이터가 없으면 정상 종료
                     }
 
-                    // DB에 저장
+                    // DB에 저장  winner_history
                     var saved = await _dbService.SaveWinnerNumbersAsync(currentRound, lottoResult.Numbers, lottoResult.DrawDate, lottoResult.TotalPrice, lottoResult.Winner, lottoResult.WinnerPrice);
                     if (saved)
                     {
@@ -129,8 +129,8 @@ namespace scheduleProgram.ProgramList.Lotto
                     var probMsg = "📊 새로운 당첨 번호가 추가되어 확률을 재계산합니다...";
                     Console.WriteLine(probMsg);
                     MainForm.LogToHistory(programName, probMsg);
-                    await _dbService.CalculateAndUpdateProbabilitiesAsync();
-                    
+                    await _dbService.CalculateAndUpdateProbabilitiesAsync();                        //number_probability_status 저장
+
                     // 새로 추가된 회차들의 당첨번호 확률 계산
                     var calcMsg = "📊 새로 추가된 회차들의 당첨번호 확률을 계산합니다...";
                     Console.WriteLine(calcMsg);
@@ -138,7 +138,7 @@ namespace scheduleProgram.ProgramList.Lotto
                     var currentLatestRound = await _dbService.GetLatestRoundAsync();
                     for (int round = currentLatestRound - processedCount + 1; round <= currentLatestRound; round++)
                     {
-                        await _dbService.CalculateAndSaveRoundWinnerRateAsync(round);
+                        await _dbService.CalculateAndSaveRoundWinnerRateAsync(round);             //winner_rate_history 저장
                     }
                 }
                 else
@@ -149,46 +149,45 @@ namespace scheduleProgram.ProgramList.Lotto
                     await _dbService.CalculateAndUpdateProbabilitiesAsync();
                 }
 
-                // 3. 추천번호 계산 및 저장
+                // 3. 번호별 등장 간격 계산 및 저장
+                var frequencyStartMsg = "📊 번호별 등장 간격 계산 및 저장을 시작합니다...";
+                Console.WriteLine(frequencyStartMsg);
+                MainForm.LogToHistory(programName, frequencyStartMsg);
+                
+                await _dbService.CalculateAndSaveNumberFrequencyAsync();                        // number_frequency 저장
+
+                var frequencyCompleteMsg = "📊 번호별 등장 간격 계산 및 저장 완료!";
+                Console.WriteLine(frequencyCompleteMsg);
+                MainForm.LogToHistory(programName, frequencyCompleteMsg);
+
+                // 4. 가중치 적용 확률 계산 및 저장
+                var weightedStartMsg = "🎯 가중치 적용 확률 계산 및 저장을 시작합니다...";
+                Console.WriteLine(weightedStartMsg);
+                MainForm.LogToHistory(programName, weightedStartMsg);
+                
+                await _dbService.CalculateAndSaveWeightedProbabilitiesAsync();                  // number_probability_new 저장
+
+                var weightedCompleteMsg = "🎯 가중치 적용 확률 계산 및 저장 완료!";
+                Console.WriteLine(weightedCompleteMsg);
+                MainForm.LogToHistory(programName, weightedCompleteMsg);
+
+                // 5. 추천번호 계산 및 저장 (가중치 확률 기반)
                 var recommendStartMsg = "🎯 추천번호 계산 및 저장을 시작합니다...";
                 Console.WriteLine(recommendStartMsg);
                 MainForm.LogToHistory(programName, recommendStartMsg);
                 
-                // 4. 최신 회차를 기준으로 다음 회차의 추천번호 계산
+                // 최신 회차를 기준으로 다음 회차의 추천번호 계산
                 var latestRoundForRecommend = await _dbService.GetLatestRoundAsync();
                 var nextRecommendRound = latestRoundForRecommend + 1;
                 
                 var recommendCalcMsg = $"📊 {nextRecommendRound}회차 추천번호 계산 중...";
                 Console.WriteLine(recommendCalcMsg);
                 MainForm.LogToHistory(programName, recommendCalcMsg);
-                await _dbService.CalculateAndSaveRecommendNumbersAsync(nextRecommendRound);
-                
+                await _dbService.CalculateAndSaveRecommendNumbersAsync(nextRecommendRound);     // recommand_history 저장
+
                 var recommendCompleteMsg = "🎯 추천번호 계산 및 저장 완료!";
                 Console.WriteLine(recommendCompleteMsg);
                 MainForm.LogToHistory(programName, recommendCompleteMsg);
-
-                // 5. 번호별 등장 간격 계산 및 저장
-                var frequencyStartMsg = "📊 번호별 등장 간격 계산 및 저장을 시작합니다...";
-                Console.WriteLine(frequencyStartMsg);
-                MainForm.LogToHistory(programName, frequencyStartMsg);
-                
-                await _dbService.CalculateAndSaveNumberFrequencyAsync();
-                
-                var frequencyCompleteMsg = "📊 번호별 등장 간격 계산 및 저장 완료!";
-                Console.WriteLine(frequencyCompleteMsg);
-                MainForm.LogToHistory(programName, frequencyCompleteMsg);
-
-                // 6. 가중치 적용 확률 계산 및 저장
-                var weightedStartMsg = "🎯 가중치 적용 확률 계산 및 저장을 시작합니다...";
-                Console.WriteLine(weightedStartMsg);
-                MainForm.LogToHistory(programName, weightedStartMsg);
-                
-                await _dbService.CalculateAndSaveWeightedProbabilitiesAsync();
-                
-                var weightedCompleteMsg = "🎯 가중치 적용 확률 계산 및 저장 완료!";
-                Console.WriteLine(weightedCompleteMsg);
-                MainForm.LogToHistory(programName, weightedCompleteMsg);
-
             }
             catch (Exception ex)
             {
