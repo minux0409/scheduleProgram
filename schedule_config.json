@@ -1,4 +1,14 @@
 {
+  "Lotto_getRecentWinnerInfo.cs": {
+    "IsEnabled": false,
+    "ScheduleType": 0,
+    "ScheduledTime": null,
+    "IntervalMinutes": 60,
+    "LastExecuted": null,
+    "SelectedDayOfWeek": 1,
+    "SelectedDayOfMonth": 1,
+    "IsLastDayOfMonth": false
+  },
   "Lotto_getRecommandDate.cs": {
     "IsEnabled": false,
     "ScheduleType": 1,
